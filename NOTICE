@@ -1,0 +1,28 @@
+Piper Sandwich VR — third-party components
+==========================================
+
+MuJoCo (WebAssembly engine)
+  vendor/mujoco/mujoco.js, vendor/mujoco/mujoco.wasm, vendor/mujoco/mujoco.d.ts
+  Package: @mujoco/mujoco
+  License: Apache License 2.0
+  Copyright: Google DeepMind
+  https://github.com/google-deepmind/mujoco
+
+scene-loader.js
+  Adapted (geometry builder + coordinate helpers) from mujoco_wasm.
+  License: ISC
+  Copyright: Sergei Surovtsev and Johnathon Selstad
+  https://github.com/zalo/mujoco_wasm
+
+three.js
+  Loaded at runtime from a CDN (not vendored).
+  License: MIT
+  Copyright: three.js authors
+  https://github.com/mrdoob/three.js
+
+AgileX Piper model
+  assets/scene.xml (two prefixed copies) and assets/meshes/*.STL
+  Derived from the piper_description package in piper_ros.
+  Package license: BSD; repository: MIT, Copyright (c) 2024 RosenYin
+  A 'tcp' site was added to link6 for IK targeting.
+  https://github.com/agilexrobotics/piper_ros
