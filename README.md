@@ -32,7 +32,22 @@ a desktop to orbit the scene with the mouse). Then:
   reposition your hand without moving the arm.
 - **Trigger = gripper** (analog close).
 - Left controller drives the **left** arm, right controller the **right** arm.
-- The scene floats in front of you at table height; reach in and work.
+- You start **sitting between the two arms, looking forward** at the board.
+
+### Get comfortable (thumbsticks)
+
+You can re-orient the whole workspace and the arms without leaving VR:
+
+| Stick / button | Action |
+|---|---|
+| **Right stick ←/→** | turn (yaw) the whole workspace |
+| **Right stick ↑/↓** | move it closer / further |
+| **Left stick ↑/↓** | raise / lower the table |
+| **Left stick ←/→** | rotate the arm **bases** — toe them in/out toward you |
+| **A / X button** | recenter to the default view |
+
+The teleop stays correct no matter how you turn the scene: controller poses are
+transformed into the workspace's own frame before driving the arms.
 
 Everything runs locally in the headset — physics, IK and rendering.
 

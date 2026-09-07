@@ -40,7 +40,7 @@ class SandwichVR {
     this.scene.background = new THREE.Color(0.12, 0.14, 0.18);
 
     this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 100);
-    this.camera.position.set(0.0, 1.5, 1.1);
+    this.camera.position.set(0.0, 1.55, 0.55);   // roughly the user's head, looking forward
     this.scene.add(this.camera);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -61,7 +61,7 @@ class SandwichVR {
     document.body.appendChild(VRButton.createButton(this.renderer));
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.target.set(0, 0.85, 0);
+    this.controls.target.set(0, 0.95, -0.6);
     this.controls.enableDamping = true;
     this.controls.update();
 
@@ -79,8 +79,15 @@ class SandwichVR {
     [this.model, this.data, this.bodies, this.lights] =
       await loadSceneFromURL(mujoco, 'scene.xml', this);
 
-    // Lift the whole scene to a comfortable standing height / in front of the user.
-    this.mujocoRoot.position.set(0, 0.55, -0.35);
+    // Default view: sit *between* the two arms, looking forward at the board.
+    // A +90° yaw makes MuJoCo +x (toward the board) point to the user's forward
+    // (three -z); the arms (MuJoCo ±y) then sit on the user's left/right, with
+    // the bases flanking them at z≈0. Adjust live with the thumbsticks (readNav).
+    this.mujocoRoot.rotation.y = Math.PI / 2;
+    this.mujocoRoot.position.set(0, 0.95, -0.32);
+    this.mujocoRoot.updateMatrixWorld(true);
+    this._homeView = { pos: this.mujocoRoot.position.clone(),
+                       rotY: this.mujocoRoot.rotation.y };
 
     // Start from the 'home' keyframe.
     mujoco.mj_resetData(this.model, this.data);
@@ -101,6 +108,12 @@ class SandwichVR {
       this._mocap[s] = this.model.body_mocapid[bid];
     }
 
+    // arm-base rotation (present only if the scene has mount actuators)
+    this._baseYaw = 0;
+    const aL = mujoco.mj_name2id(this.model, mujoco.mjtObj.mjOBJ_ACTUATOR.value, 'left_mount_yaw');
+    const aR = mujoco.mj_name2id(this.model, mujoco.mjtObj.mjOBJ_ACTUATOR.value, 'right_mount_yaw');
+    this._mountAct = (aL >= 0 && aR >= 0) ? { left: aL, right: aR } : null;
+
     this.renderer.setAnimationLoop(() => this.frame());
     setStatus('Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
   }
@@ -119,14 +132,20 @@ class SandwichVR {
     const frame = this.renderer.xr.getFrame();
     const ref = this.renderer.xr.getReferenceSpace();
     if (!frame || !ref) return out;
+    // Controller poses are transformed into the scene root's LOCAL frame, so
+    // the teleop mapping stays correct no matter how the joysticks have rotated
+    // or moved the scene (the fixed three->MuJoCo swizzle then applies).
+    const rootQinv = this.mujocoRoot.getWorldQuaternion(new THREE.Quaternion()).invert();
     for (const src of session.inputSources) {
       if (!src.gripSpace || !src.handedness) continue;
       const pose = frame.getPose(src.gripSpace, ref);
       if (!pose) continue;
       const p = pose.transform.position, o = pose.transform.orientation;
+      const lp = this.mujocoRoot.worldToLocal(new THREE.Vector3(p.x, p.y, p.z));
+      const lq = rootQinv.clone().multiply(new THREE.Quaternion(o.x, o.y, o.z, o.w));
       const gp = src.gamepad;
       const btn = i => (gp && gp.buttons[i]) ? gp.buttons[i].value : 0;
-      const raw = { pos: [p.x, p.y, p.z], quat: [o.w, o.x, o.y, o.z],
+      const raw = { pos: [lp.x, lp.y, lp.z], quat: [lq.w, lq.x, lq.y, lq.z],
                     trigger: btn(0), grip: btn(1) };
       if (src.handedness === 'left') out.left = raw;
       else if (src.handedness === 'right') out.right = raw;
@@ -134,7 +153,57 @@ class SandwichVR {
     return out;
   }
 
+  // Read thumbsticks / face buttons for navigating the scene.
+  readNav() {
+    const nav = { yaw: 0, dist: 0, height: 0, toe: 0, reset: false };
+    const session = this.renderer.xr.getSession();
+    if (!session) return nav;
+    const dz = v => Math.abs(v) < 0.2 ? 0 : v;
+    for (const src of session.inputSources) {
+      const gp = src.gamepad; if (!gp) continue;
+      const ax = i => gp.axes.length > i ? gp.axes[i] : 0;
+      const pressed = i => gp.buttons[i] && gp.buttons[i].pressed;
+      if (src.handedness === 'right') {
+        nav.yaw += dz(ax(2));            // right stick L/R : spin the workspace
+        nav.dist += dz(ax(3));           // right stick U/D : move it closer/further
+        if (pressed(4) || pressed(5)) nav.reset = true;   // A/B : recenter
+      } else if (src.handedness === 'left') {
+        nav.toe += dz(ax(2));            // left stick L/R : toe the arm bases in/out
+        nav.height += dz(ax(3));         // left stick U/D : raise / lower the table
+        if (pressed(4) || pressed(5)) nav.reset = true;   // X/Y : recenter
+      }
+    }
+    return nav;
+  }
+
+  applyNav(nav, dt) {
+    const r = this.mujocoRoot;
+    if (nav.reset) {
+      r.position.copy(this._homeView.pos);
+      r.rotation.y = this._homeView.rotY;
+      this._baseYaw = 0;
+    } else {
+      r.rotation.y -= nav.yaw * 1.2 * dt;          // spin scene
+      r.position.z += nav.dist * 0.5 * dt;         // stick up (-) -> further away (-z)
+      r.position.y -= nav.height * 0.4 * dt;       // stick up (-) -> raise
+      this._baseYaw += -nav.toe * 1.0 * dt;        // symmetric toe-in/out
+      this._baseYaw = Math.max(-1.4, Math.min(1.4, this._baseYaw));
+    }
+    r.updateMatrixWorld(true);
+    // drive the arm-base mount actuators (mirrored so they toe in together)
+    if (this._mountAct) {
+      this.data.ctrl[this._mountAct.left] = this._baseYaw;
+      this.data.ctrl[this._mountAct.right] = -this._baseYaw;
+    }
+  }
+
   frame() {
+    const now = performance.now() / 1000;
+    const frameDt = Math.min(0.05, now - this._last);
+
+    // navigate / orient the scene with the thumbsticks first
+    this.applyNav(this.readNav(), frameDt);
+
     const cmds = this.readControllers();
     let anyEngaged = false;
     for (const s of SIDES) {
@@ -154,8 +223,7 @@ class SandwichVR {
     }
 
     // real-time-ish physics stepping
-    const now = performance.now() / 1000;
-    this._acc += Math.min(0.05, now - this._last); this._last = now;
+    this._acc += frameDt; this._last = now;
     const dt = this.model.opt.timestep;
     let n = 0;
     while (this._acc >= dt && n < 30) { mujoco.mj_step(this.model, this.data); this._acc -= dt; n++; }
