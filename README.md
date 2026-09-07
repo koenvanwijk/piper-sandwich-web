@@ -9,6 +9,20 @@ with the hand controllers — no install, no app, no local server.
 
 ![preview](preview.png)
 
+## Open it on the Quest (typing a URL in VR is painful)
+
+<img src="qr.png" alt="QR to the live app" width="200" align="right"/>
+
+Pick whichever is easiest — you only need to do it once, then **bookmark** it:
+
+- **Scan the QR** (right) with a QR scanner on the headset — e.g. the free
+  *QR Scanner* app on Quest 3/3s uses the passthrough cameras to read a code off
+  your phone or monitor and opens it in the browser. (Scanning it with your
+  phone opens it on the phone, which is only useful for testing.)
+- **Voice dictation:** in the Quest Browser tap the microphone in the address
+  bar and say the address.
+- **Type once, then bookmark** so it is one tap next time.
+
 ## Use it
 
 Open the live link **in the Quest browser** and press **Enter VR** (or open it on
@@ -87,8 +101,11 @@ vendor/mujoco/        official MuJoCo WASM engine (mujoco.js + mujoco.wasm)
   flip `lockOrientation` to map controller rotation for full 6-DoF teleop.
 - **Grasping** small props needs fingertip collision tuning (same as the Python
   sim); good next step for actually assembling the sandwich.
-- **Spread** is a rigid block, not a smear — a MuJoCo flex/soft body would make
-  it spreadable.
+- **Butter is spreadable**: a heap of many small high-friction pats the knife
+  pushes and smears across the bread. (A true elastic soft body would need
+  MuJoCo's `elasticity.solid` flex plugin, which this WASM build does not expose
+  for registration — and 100+ flex DoF would strain VR framerates anyway — so a
+  granular heap is the robust, real-time choice, and reads well as spreading.)
 - No headset camera streaming needed here — you're *in* the sim, which is the
   nice part of the browser version.
 
