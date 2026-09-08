@@ -42,12 +42,15 @@ You can re-orient the whole workspace and the arms without leaving VR:
 |---|---|
 | **Right stick ←/→** | turn (yaw) the whole workspace |
 | **Right stick ↑/↓** | move it closer / further |
+| **Left stick ←/→** | slide the workspace left / right |
 | **Left stick ↑/↓** | raise / lower the table |
-| **Left stick ←/→** | rotate the arm **bases** — toe them in/out toward you |
 | **A / X button** | recenter to the default view |
 
 The teleop stays correct no matter how you turn the scene: controller poses are
 transformed into the workspace's own frame before driving the arms.
+
+To toe the two arm bases inward permanently, set `ARM_YAW` in the scene builder
+(`sim/build_scene.py`) — a static, physical mounting angle, no turntable.
 
 Everything runs locally in the headset — physics, IK and rendering.
 

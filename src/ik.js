@@ -32,10 +32,6 @@ export class ArmIK {
     this.act = ARM.map(j => aid(`${side}_joint${j}`));
     this.grip = [aid(`${side}_joint7`), aid(`${side}_joint8`)];
     this.site = mujoco.mj_name2id(model, OBJ.mjOBJ_SITE.value, `${side}_tcp`);
-    // base-mount hinge (if present): its angle must be mirrored into the
-    // scratch state or FK/IK would assume an un-rotated base.
-    const mj = mujoco.mj_name2id(model, OBJ.mjOBJ_JOINT.value, `${side}_mount_yaw`);
-    this.mountQadr = mj >= 0 ? model.jnt_qposadr[mj] : -1;
     this.damping = 0.08; this.eps = 1e-4; this.maxStep = 0.25;
     // scratch state so FK probing never disturbs the live simulation
     this.scratch = new mujoco.MjData(model);
@@ -46,7 +42,6 @@ export class ArmIK {
 
   fk(q) {
     const d = this.scratch, s = this.site;
-    if (this.mountQadr >= 0) d.qpos[this.mountQadr] = this.data.qpos[this.mountQadr];
     for (let i = 0; i < 6; i++) d.qpos[this.qadr[i]] = q[i];
     this.mj.mj_kinematics(this.model, d);
     this.mj.mj_comPos(this.model, d);

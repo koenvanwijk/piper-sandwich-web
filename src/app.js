@@ -108,12 +108,6 @@ class SandwichVR {
       this._mocap[s] = this.model.body_mocapid[bid];
     }
 
-    // arm-base rotation (present only if the scene has mount actuators)
-    this._baseYaw = 0;
-    const aL = mujoco.mj_name2id(this.model, mujoco.mjtObj.mjOBJ_ACTUATOR.value, 'left_mount_yaw');
-    const aR = mujoco.mj_name2id(this.model, mujoco.mjtObj.mjOBJ_ACTUATOR.value, 'right_mount_yaw');
-    this._mountAct = (aL >= 0 && aR >= 0) ? { left: aL, right: aR } : null;
-
     this.renderer.setAnimationLoop(() => this.frame());
     setStatus('Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
   }
@@ -155,7 +149,7 @@ class SandwichVR {
 
   // Read thumbsticks / face buttons for navigating the scene.
   readNav() {
-    const nav = { yaw: 0, dist: 0, height: 0, toe: 0, reset: false };
+    const nav = { yaw: 0, dist: 0, height: 0, strafe: 0, reset: false };
     const session = this.renderer.xr.getSession();
     if (!session) return nav;
     const dz = v => Math.abs(v) < 0.2 ? 0 : v;
@@ -168,7 +162,7 @@ class SandwichVR {
         nav.dist += dz(ax(3));           // right stick U/D : move it closer/further
         if (pressed(4) || pressed(5)) nav.reset = true;   // A/B : recenter
       } else if (src.handedness === 'left') {
-        nav.toe += dz(ax(2));            // left stick L/R : toe the arm bases in/out
+        nav.strafe += dz(ax(2));         // left stick L/R : slide the workspace
         nav.height += dz(ax(3));         // left stick U/D : raise / lower the table
         if (pressed(4) || pressed(5)) nav.reset = true;   // X/Y : recenter
       }
@@ -181,20 +175,13 @@ class SandwichVR {
     if (nav.reset) {
       r.position.copy(this._homeView.pos);
       r.rotation.y = this._homeView.rotY;
-      this._baseYaw = 0;
     } else {
       r.rotation.y -= nav.yaw * 1.2 * dt;          // spin scene
       r.position.z += nav.dist * 0.5 * dt;         // stick up (-) -> further away (-z)
+      r.position.x += nav.strafe * 0.5 * dt;       // slide left / right
       r.position.y -= nav.height * 0.4 * dt;       // stick up (-) -> raise
-      this._baseYaw += -nav.toe * 1.0 * dt;        // symmetric toe-in/out
-      this._baseYaw = Math.max(-1.4, Math.min(1.4, this._baseYaw));
     }
     r.updateMatrixWorld(true);
-    // drive the arm-base mount actuators (mirrored so they toe in together)
-    if (this._mountAct) {
-      this.data.ctrl[this._mountAct.left] = this._baseYaw;
-      this.data.ctrl[this._mountAct.right] = -this._baseYaw;
-    }
   }
 
   frame() {
