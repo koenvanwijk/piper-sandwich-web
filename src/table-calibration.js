@@ -26,6 +26,15 @@ export class TableCalibrator {
     this.root.visible = false;
     scene.add(this.root);
 
+    // Keep calibration graphics separate from calibrated scene content.
+    // Recalibration may clear the overlay without deleting Piper/bread/butter.
+    this.visualRoot = new THREE.Group();
+    this.visualRoot.name = 'table-calibration-visuals';
+    this.root.add(this.visualRoot);
+    this.contentRoot = new THREE.Group();
+    this.contentRoot.name = 'table-calibrated-content';
+    this.root.add(this.contentRoot);
+
     this.markerRoot = new THREE.Group();
     scene.add(this.markerRoot);
 
@@ -47,7 +56,8 @@ export class TableCalibrator {
       try {
         this.anchor = await session.restorePersistentAnchor(this.anchorHandle);
         this.root.visible = true;
-        this.onStatus('Persistent table anchor restored.');
+        if (saved) this.onCalibrated({ matrix: null, width: saved.width, depth: saved.depth, root: this.root });
+        this.onStatus('Persistent table anchor restored — Piper + sandwich aligned.');
       } catch (error) {
         console.warn('Persistent anchor restore failed', error);
         localStorage.removeItem('piper-table-anchor-handle');
@@ -70,6 +80,7 @@ export class TableCalibrator {
     this.clearMarkers();
     this.points = [];
     this.collecting = true;
+    this.root.visible = false;
     this.onStatus('Calibration: aim at table corner A (origin) and press trigger.');
   }
 
@@ -78,7 +89,7 @@ export class TableCalibrator {
     this.points = [];
     this.clearMarkers();
     this.root.visible = false;
-    this.root.clear();
+    this.visualRoot.clear();
     try { this.anchor?.delete?.(); } catch {}
     if (this.anchorHandle && this.session?.deletePersistentAnchor) {
       try { await this.session.deletePersistentAnchor(this.anchorHandle); } catch {}
@@ -227,36 +238,35 @@ export class TableCalibrator {
   }
 
   buildTableVisualization(width, depth) {
-    this.root.clear();
+    this.visualRoot.clear();
+
     const surface = new THREE.Mesh(
       new THREE.PlaneGeometry(width, depth),
-      new THREE.MeshBasicMaterial({ color: 0x33aaff, transparent: true, opacity: 0.16, side: THREE.DoubleSide })
+      new THREE.MeshBasicMaterial({
+        color: 0x33aaff,
+        transparent: true,
+        opacity: 0.10,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
     );
     surface.rotation.x = -Math.PI / 2;
     surface.position.set(width / 2, 0.002, depth / 2);
-    this.root.add(surface);
+    this.visualRoot.add(surface);
 
     const edgePoints = [
       new THREE.Vector3(0, .006, 0), new THREE.Vector3(width, .006, 0),
       new THREE.Vector3(width, .006, depth), new THREE.Vector3(0, .006, depth),
       new THREE.Vector3(0, .006, 0)
     ];
-    this.root.add(new THREE.Line(
+    this.visualRoot.add(new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(edgePoints),
       new THREE.LineBasicMaterial({ color: 0xffffff })
     ));
+
     const axes = new THREE.AxesHelper(Math.min(.25, width * .25, depth * .25));
     axes.position.y = .01;
-    this.root.add(axes);
-
-    addPiperPlaceholder(this.root, width * .16, depth * .22, 0);
-    addPiperPlaceholder(this.root, width * .84, depth * .22, Math.PI);
-    const bread = new THREE.Mesh(
-      new THREE.BoxGeometry(.13, .012, .11),
-      new THREE.MeshStandardMaterial({ color: 0xd6ad72, roughness: .8 })
-    );
-    bread.position.set(width / 2, .015, depth * .58);
-    this.root.add(bread);
+    this.visualRoot.add(axes);
   }
 
   addMarker(position, index) {
@@ -281,24 +291,4 @@ function pointInPolygonXZ(point, polygon) {
     if (cross) inside = !inside;
   }
   return inside;
-}
-
-function addPiperPlaceholder(parent, x, z, yaw) {
-  const group = new THREE.Group();
-  group.position.set(x, 0, z);
-  group.rotation.y = yaw;
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(.07, .08, .05, 24),
-    new THREE.MeshStandardMaterial({ color: 0x60656d, metalness: .5, roughness: .4 })
-  );
-  base.position.y = .025;
-  group.add(base);
-  const arm = new THREE.Mesh(
-    new THREE.BoxGeometry(.035, .28, .035),
-    new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: .55 })
-  );
-  arm.position.set(0, .18, 0);
-  arm.rotation.z = .35;
-  group.add(arm);
-  parent.add(group);
 }
