@@ -7,6 +7,9 @@ with the hand controllers — no install, no app, no local server.
 
 **▶ Live:** https://koenvanwijk.github.io/piper-sandwich-web/
 
+**▶ Quest passthrough table calibration:** https://koenvanwijk.github.io/piper-sandwich-web/table-ar/
+
+
 ![preview](preview.png)
 
 ## Open it on the Quest (typing a URL in VR is painful)
