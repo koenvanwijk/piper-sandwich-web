@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { TableCalibrator } from '../src/table-calibration.js';
 import { AprilTagCamera } from '../src/apriltag-camera.js';
+import { ARSandwichScene } from '../src/ar-sandwich-scene.js';
 
 const statusEl = document.querySelector('#status');
 const detailsEl = document.querySelector('#details');
@@ -40,12 +41,23 @@ for (let i = 0; i < 2; i++) {
   scene.add(controller);
 }
 
+let sandwichScene;
 const calibrator = new TableCalibrator(renderer, scene, {
   onStatus: setStatus,
   onCalibrated: ({ width, depth }) => {
+    sandwichScene?.placeOnTable(width, depth);
     detailsEl.textContent =
-      `table.width=${width.toFixed(3)} m\ntable.depth=${depth.toFixed(3)} m\nframe: A origin · +X=A→B · +Z=A→C · +Y=up`;
+      `table.width=${width.toFixed(3)} m\ntable.depth=${depth.toFixed(3)} m\nframe: A origin · +X=A→B · +Z=A→C · +Y=up\nscene: 2× Piper + 2× bread + 14× butter + board/knife/jar/plate`;
   },
+});
+
+sandwichScene = new ARSandwichScene(scene, calibrator.contentRoot, { onStatus: setStatus });
+sandwichScene.init().then(() => {
+  const saved = calibrator.getSavedCalibration();
+  if (saved) sandwichScene.placeOnTable(saved.width, saved.depth);
+}).catch(error => {
+  console.error(error);
+  setStatus(`Sandwich scene failed to load: ${error.message}`);
 });
 
 const tagCamera = new AprilTagCamera(video, tagCanvas, {
@@ -70,7 +82,9 @@ renderer.xr.addEventListener('sessionstart', async () => {
   await calibrator.attachSession(session);
   recalibrateButton.disabled = false;
   clearButton.disabled = false;
-  calibrator.start();
+  // A successfully restored persistent anchor is already aligned; otherwise
+  // collect A/B/C immediately.
+  if (!calibrator.anchor) calibrator.start();
   session.addEventListener('end', () => {
     calibrator.detachSession();
     recalibrateButton.disabled = true;
