@@ -25,6 +25,12 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
     let names_array = new Uint8Array(model.names);
     let fullString = textDecoder.decode(model.names);
     let names = fullString.split(textDecoder.decode(new ArrayBuffer(1)));
+    const nameAt = adr => {
+      if (adr == null || adr < 0) return '';
+      let end = adr;
+      while (end < names_array.length && names_array[end] !== 0) end++;
+      return textDecoder.decode(names_array.subarray(adr, end));
+    };
 
     // Create the root object.
     let mujocoRoot = new THREE.Group();
@@ -250,6 +256,10 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       mesh.castShadow = g == 0 ? false : true;
       mesh.receiveShadow = type != 7;
       mesh.bodyID = b;
+      const geomName = model.name_geomadr ? nameAt(model.name_geomadr[g]) : '';
+      mesh.name = geomName || `geom_${g}`;
+      mesh.userData.mujocoGeomName = geomName;
+      mesh.userData.mujocoGeomId = g;
       bodies[b].add(mesh);
       getPosition  (model.geom_pos, g, mesh.position  );
       if (type != 0) { getQuaternion(model.geom_quat, g, mesh.quaternion); }
