@@ -5,9 +5,9 @@
 //   - mes: min/max z (optillen?) en of het mes met de TCP meebeweegt
 //   - verplaatsing van bread0 en van de boter-blokjes (gemiddeld/max, in mm)
 //   - na afloop: ligt bread1 op bread0 (xy binnen 2 cm, z hoger)?
-// Gebruik: node tools/run-sandwich-demo.mjs [--json] [--speed=1]
+// Gebruik: node tools/run-sandwich-demo.mjs [--json] [--speed=1] [--tuning='{"PUSH_END_DY":-0.05}'] [--require-top]
 import { createHeadlessSim } from './headless-sim.mjs';
-import { MotionPlayer, makeSandwichChoreography, readObjectPositions } from '../src/sandwich-motion.js';
+import { MotionPlayer, makeSandwichChoreography, readObjectPositions, GEOM } from '../src/sandwich-motion.js';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
@@ -20,7 +20,8 @@ const FRAME = 0.05;                                   // zoals app.js: 25 x 0.00
 // Eerst laten we het tafereel 1 s tot rust komen (mes zakt van 3.1 cm op de tafel).
 env.stepPhysics(2.0);
 const objects = readObjectPositions(mujoco, model, data);
-const steps = makeSandwichChoreography({ objects });
+const tuning = JSON.parse((args.find(a => a.startsWith('--tuning=')) || '--tuning={}').slice(9));
+const steps = makeSandwichChoreography({ objects, tuning });
 
 const butterNames = []; for (let i = 0; i < 14; i++) butterNames.push('butter' + i);
 const snap = () => ({
@@ -32,6 +33,7 @@ const f = (v, n = 1) => (v * 1000).toFixed(n);
 
 const rows = [];
 let cur = null, prev = snap();
+const initial = snap();
 const player = new MotionPlayer(env, steps, {
   ikIters: 6,
   onStep: (name, i) => {
@@ -84,12 +86,22 @@ const b0 = final.bread0, b1 = final.bread1;
 const dxy = Math.hypot(b1[0]-b0[0], b1[1]-b0[1]);
 const closed = { bread1: b1.map(x => +x.toFixed(4)), bread0: b0.map(x => +x.toFixed(4)),
   dxyMm: +f(dxy), dzMm: +f(b1[2]-b0[2]), onTop: dxy < 0.02 && b1[2] > b0[2] + 0.005 };
+// Geslaagd = dichtgeschoven: zij aan zij, zelfde hoogte, randen <= 2 cm uit elkaar
+// (begin: 30 mm tussenruimte; middelpuntafstand 90 mm = randen raken; boterblokjes zitten er nog tussen)
+closed.gapMm = +f(dxy - 2 * GEOM.bread.half[0]);
+closed.adjacent = dxy < 0.112 && Math.abs(b1[2]-b0[2]) < 0.005;
+// Boter: hoeveel blokjes liggen na afloop binnen de bread0-omtrek, en hoe breed is de verdeling
+const insideOf = c => p => Math.abs(p[0]-c[0]) < 0.045 && Math.abs(p[1]-c[1]) < 0.045 && p[2] > 0.02;
+const spreadStd = pts => { const mx = pts.reduce((a,p)=>a+p[0],0)/pts.length, my = pts.reduce((a,p)=>a+p[1],0)/pts.length;
+  return Math.sqrt(pts.reduce((a,p)=>a+(p[0]-mx)**2+(p[1]-my)**2,0)/pts.length); };
+const butter = { onBread0Before: initial.butter.filter(insideOf(initial.bread0)).length, onBread0After: final.butter.filter(insideOf(final.bread0)).length,
+  total: final.butter.length, stdBeforeMm: +f(spreadStd(initial.butter)), stdAfterMm: +f(spreadStd(final.butter)) };
 const knifeEnd = final.knife, plate = objects.plate;
 const knifeOnPlate = { knife: knifeEnd.map(x => +x.toFixed(4)),
   dxyToPlateMm: +f(Math.hypot(knifeEnd[0]-plate[0], knifeEnd[1]-plate[1])) };
 knifeOnPlate.onPlate = knifeOnPlate.dxyToPlateMm < 90 && knifeEnd[2] < 0.03;   // plate-straal 9 cm
 
-if (asJson) console.log(JSON.stringify({ steps: out, closed, knifeOnPlate }, null, 2));
+if (asJson) console.log(JSON.stringify({ steps: out, closed, butter, knifeOnPlate }, null, 2));
 else {
   console.log('\n=== Resultaat per stap ===');
   for (const r of out) {
@@ -100,8 +112,10 @@ else {
   }
   console.log('\n=== Einde ===');
   console.log(`bread1 ${JSON.stringify(closed.bread1)}  bread0 ${JSON.stringify(closed.bread0)}`);
-  console.log(`bread1 t.o.v. bread0: dxy ${closed.dxyMm} mm, dz ${closed.dzMm} mm -> ${closed.onTop ? 'LIGT OP bread0 ✔' : 'ligt NIET op bread0 ✘'}`);
+  console.log(`bread1 t.o.v. bread0: dxy ${closed.dxyMm} mm, dz ${closed.dzMm} mm (tussenruimte ${closed.gapMm} mm, begin 30 mm) -> ${closed.adjacent ? 'ZIJ AAN ZIJ (dichtgeschoven) ✔' : 'niet dichtgeschoven ✘'}; ${closed.onTop ? 'ligt OP bread0 ✔' : 'ligt NIET bovenop bread0 (bekende beperking)'}`);
+  console.log(`boter: ${butter.onBread0Before}/${butter.total} blokjes op bread0 vooraf, ${butter.onBread0After}/${butter.total} achteraf; spreiding (std xy) ${butter.stdBeforeMm} -> ${butter.stdAfterMm} mm`);
   console.log(`mes eind ${JSON.stringify(knifeOnPlate.knife)}; afstand xy tot bord-midden ${knifeOnPlate.dxyToPlateMm} mm -> ${knifeOnPlate.onPlate ? 'ligt op het bord ✔' : 'ligt NIET op het bord ✘'}`);
   console.log(`(simulatietijd ${data.time.toFixed(1)} s, rekentijd ${((performance.now()-t0)/1000).toFixed(1)} s)`);
 }
-process.exit(closed.onTop ? 0 : 2);
+// exit 0 = dichtgeschoven (of, met --require-top, echt bovenop); 2 = niet gelukt
+process.exit((args.includes('--require-top') ? closed.onTop : closed.adjacent) ? 0 : 2);

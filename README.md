@@ -62,16 +62,23 @@ Everything runs locally in the headset — physics, IK and rendering.
 Een vaste, herhaalbare voorbeeldbeweging ("choreografie") waarin de twee armen een broodje
 smeren: (1) ingrediënten verzamelen (rechts pakt het mes, links gaat boven de pot staan),
 (2) boter smeren met het mes over `bread0`, (3) beleg toevoegen (linkerarm brengt beleg van de
-pot naar het brood), (4) broodje sluiten (mes terug op het bord `plate`, `bread1` bovenop `bread0`).
+pot naar het brood), (4) broodje sluiten (mes terug op het bord `plate`, daarna `bread1` met de gesloten
+gripper tegen `bread0` aan schuiven — *niet* bovenop leggen, zie beperkingen).
 
 **Starten**
 
-- In de browser: open de pagina met `?demo=1` (bv. `http://127.0.0.1:8092/?demo=1`). De huidige
-  stap staat in het statusveld linksboven; er komen knoppen *Pauze/Verder* en *Opnieuw*.
+- In de browser: open de pagina met `?demo=1` (of klik onderaan op de link *Demo: broodje smeren*;
+  bv. lokaal `http://127.0.0.1:8000/?demo=1`, sneller afspelen: `?demo=1&speed=2`). Rechts staat een
+  paneel (op een smal/staand scherm, bv. een autoscherm, onderaan) met de **stappenlijst** (huidige stap
+  blauw, klaar = ✓), een **illustratie per stap** (`demo/step-*.svg`, gegenereerd met
+  `python3 tools/make-step-images.py`) en grote knoppen **Pauze/Verder** en **Opnieuw**.
   Zonder `?demo=1` verandert er niets (teleop werkt zoals altijd). Tijdens de demo is teleop uit.
 - Headless (Node, echte MuJoCo-WASM, zonder three.js):
-  `node tools/run-sandwich-demo.mjs` (optioneel `--json`). Logt per stap de maximale
-  TCP-fout, of het mes optilt, of boter/brood verschuift en of `bread1` op `bread0` ligt.
+  `node tools/run-sandwich-demo.mjs` (optioneel `--json`, `--tuning='{"PUSH_Z":0.02}'`,
+  `--require-top`). Logt per stap de maximale TCP-fout, of het mes optilt, of boter/brood
+  verschuift, of `bread1` is dichtgeschoven tegen `bread0` en het aantal boterblokjes op `bread0`.
+  Exitcode 0 = `bread1` ligt tegen `bread0` (met `--require-top`: echt bovenop, dat lukt niet),
+  2 = niet gelukt. Draait in ~8 s (Node ≥ 18, geen `npm install` nodig: MuJoCo-WASM zit in `vendor/`).
 
 **Stappen aanpassen** — alles staat in `src/sandwich-motion.js`:
 
@@ -98,9 +105,11 @@ pot naar het brood), (4) broodje sluiten (mes terug op het bord `plate`, `bread1
 - **Beleg is niet fysiek**: er zit geen beleg in de pot in `scene.xml`; de linkerarm "schept" met
   de gripper en opent boven het brood.
 - **`bread1` grijpen lukt niet**: platliggend brood (9 cm) is breder dan de opening van de gripper
-  (~7 cm), en een hoekklem hield in geen enkele geteste combinatie. `bread1` wordt daardoor niet
-  op `bread0` gelegd (het script meldt dit eerlijk en eindigt met exitcode 2); de armbeweging
-  zelf (pakken, transporteren, boven `bread0` loslaten) is wel correct.
+  (~7 cm); hoekklem (yaw ±30/±45°, theta 130/150, diverse diepte/hoogte, ook met hogere wrijving op de
+  vingers) en zijkant-klem tilden het brood in geen enkele geteste combinatie op. Daarom **schuift** de
+  demo `bread1` met de gesloten gripper naar `bread0` (stap 4b): dat werkt in de simulatie
+  (tussenruimte 30 mm → ~15 mm, boterblokjes zitten er nog tussen), maar `bread1` ligt dus **niet
+  bovenop** `bread0`.
 - De demo zet in de browser (en in het script) botsingen van de statische basis-meshes uit
   (`relaxBaseContacts`): base_link en link1 overlappen ~6 mm in `scene.xml`, waardoor joint1 anders
   vastklemt en de armen niet zijwaarts kunnen zwenken.
@@ -148,6 +157,10 @@ src/app.js            init WASM, load scene, render/control loop, three.js WebXR
 src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
 src/qmath.js          quaternion helpers
+src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless)
+src/demo-ui.js        demo-paneel (stappenlijst, plaatje, Pauze/Opnieuw), alleen bij ?demo=1
+demo/step-*.svg       stap-illustraties (tools/make-step-images.py)
+tools/                headless MuJoCo-test van de demo
 src/scene-loader.js   MuJoCo model → three.js meshes (adapted from zalo/mujoco_wasm)
 assets/scene.xml      the sandwich scene (shared with the Python sim)
 assets/meshes/*.STL   Piper link meshes

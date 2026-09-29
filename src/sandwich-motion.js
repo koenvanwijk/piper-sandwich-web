@@ -129,7 +129,7 @@ export const TUNING = {
   // haalbaarheidsscan (IK, 30 iteraties, fout < 2 mm / 0.03 rad) over ALLE waypoints:
   // rechts (160, 15) en links (100, 0) zijn overal haalbaar. Eén vaste oriëntatie per arm
   // houdt de beweging rustig en het mes horizontaal.
-  ORI: { right: [15, 160, 0], rightBread: [15, 150, 0], left: [15, 100, 0] },
+  ORI: { right: [15, 160, 0], rightPush: [0, 150, 0], left: [15, 100, 0] },
   // Mes pakken: TCP-positie t.o.v. de mes-origine (x, y) en hoogte (TCP-z).
   // hx=+0.04 (i.e. aan het voorste eind van het handvat) bleek in de simulatie het
   // betrouwbaarst (zie README, "Bekende beperkingen").
@@ -146,9 +146,8 @@ export const TUNING = {
   GRIP_CLOSE_TIME: 2.0,     // langzaam sluiten (s)
   PLATE_TCP_DX: -0.06,      // TCP-x t.o.v. plate-midden bij het neerleggen van het mes
   PLATE_Z: 0.0,             // TCP-z bij het neerleggen van het mes
-  BREAD1_PINCH_DEPTH: 0.03, // hoek-klem: afstand van de hoek langs de diagonaal (m)
-  BREAD1_PINCH_Z: 0.0,
-  BREAD_PLACE_Z: 0.085,     // TCP-z waarop bread1 boven bread0 wordt losgelaten
+  // Bread1 dichtschuiven (gesloten gripper duwt langs de tafel):
+  PUSH_DX: 0.0, PUSH_START_DY: -0.09, PUSH_END_DY: 0.0, PUSH_Z: 0.01,
 };
 
 const Q = a => toolQuat(a[0], a[1], a[2]);
@@ -230,35 +229,30 @@ export function makeSandwichChoreography(opts = {}) {
   ];
   const leftHome = [{ pos: [0.07, 0.22, 0.36], t: 5.0 }];
 
-  // --- Stap 4b: bread1 op bread0 leggen ------------------------------------
-  // De gripper opent maar ~7 cm en het brood is 9 cm breed: platliggend brood kan alleen
-  // aan een HOEK geklemd worden (wrijvingsklem over de diagonaal). Zie README.
-  const h = GEOM.bread.half[0], d = T.BREAD1_PINCH_DEPTH;
-  const cornerX = b1[0] + h, cornerY = b1[1] + h;         // hoek (+x,+y) richting bread0/midden
-  const ux = -Math.SQRT1_2, uy = -Math.SQRT1_2;           // diagonaal de hoek in
-  const gx = cornerX + ux * d + 0, gy = cornerY + uy * d;
-  const qB = toolQuat(T.ORI.rightBread[0], T.ORI.rightBread[1], T.ORI.rightBread[2]);
-  const dxp = gx - b1[0], dyp = gy - b1[1];               // greeppunt t.o.v. bread1-midden
-  const zc = T.BREAD1_PINCH_Z;
+  // --- Stap 4b: broodje sluiten: bread1 tegen bread0 schuiven -----------------------
+  // Grijpen lukt niet: de gripper opent maar ~7 cm en het platliggende brood is 9 cm breed
+  // (hoek-klem, brede klem en duwen-naar-boven zijn in de simulatie allemaal geprobeerd).
+  // Daarom sluiten we het broodje door bread1 met de gesloten gripper langs de tafel naar
+  // bread0 te SCHUIVEN (zij aan zij, randen tegen elkaar). Bread1 komt dus NIET bovenop
+  // bread0 te liggen; zie README "Bekende beperkingen".
+  const qP = Q(T.ORI.rightPush);
+  const pushX = b1[0] + T.PUSH_DX;
+  const pushY0 = b1[1] + T.PUSH_START_DY;                 // achter bread1
+  const pushY1 = b0[1] - 2 * GEOM.bread.half[1] + T.PUSH_END_DY;   // rand bread1 tegen rand bread0
   const closeSandwich = [
-    { pos: P(gx, gy, T.SAFE_Z), quat: qB, grip: T.GRIP_OPEN, t: 3.5 },
-    { pos: P(gx, gy, zc + 0.03), t: 5.5 },
-    { pos: P(gx, gy, zc), t: 6.5 },
-    { pos: P(gx, gy, zc), grip: T.GRIP_CLOSED, t: 6.5 + C },
-    { pos: P(gx, gy, zc), t: 7.0 + C },
-    { pos: P(gx, gy, T.SAFE_Z), t: 9.5 + C },
-    { pos: P(b0[0] + dxp, b0[1] + dyp, T.SAFE_Z), t: 12.5 + C },
-    { pos: P(b0[0] + dxp, b0[1] + dyp, T.BREAD_PLACE_Z), t: 14.0 + C },
-    { pos: P(b0[0] + dxp, b0[1] + dyp, T.BREAD_PLACE_Z), grip: T.GRIP_OPEN, t: 15.0 + C },
-    { pos: P(b0[0] + dxp, b0[1] + dyp, T.SAFE_Z + 0.03), t: 16.5 + C },
+    { pos: P(pushX, pushY0, T.SAFE_Z), quat: qP, grip: T.GRIP_CLOSED, t: 3.5 },
+    { pos: P(pushX, pushY0, T.PUSH_Z), t: 5.5 },
+    { pos: P(pushX, pushY1, T.PUSH_Z), t: 10.0 },
+    { pos: P(pushX, pushY1, T.PUSH_Z), t: 10.8 },
+    { pos: P(pushX, pushY1, T.SAFE_Z), t: 12.5 },
   ];
 
   return [
-    { name: '1. Ingrediënten verzamelen', tracks: { right: fetchKnife, left: leftToJar } },
-    { name: '2. Boter smeren',            tracks: { right: spread } },
-    { name: '3. Beleg toevoegen',         tracks: { left: topping } },
-    { name: '4a. Mes terug op het bord',  tracks: { right: knifeToPlate, left: leftHome } },
-    { name: '4b. Broodje sluiten',        tracks: { right: closeSandwich } },
+    { name: '1. Ingrediënten verzamelen', image: 'demo/step-1-verzamelen.svg', tracks: { right: fetchKnife, left: leftToJar } },
+    { name: '2. Boter smeren',            image: 'demo/step-2-smeren.svg', tracks: { right: spread } },
+    { name: '3. Beleg toevoegen',         image: 'demo/step-3-beleg.svg', tracks: { left: topping } },
+    { name: '4a. Mes terug op het bord',  image: 'demo/step-4a-mes-terug.svg', tracks: { right: knifeToPlate, left: leftHome } },
+    { name: '4b. Broodje sluiten (dichtschuiven)', image: 'demo/step-4b-sluiten.svg', tracks: { right: closeSandwich } },
   ];
 }
 
@@ -271,7 +265,7 @@ function normalizeStep(step) {
   let duration = 0;
   for (const wps of Object.values(tracks))
     for (const w of wps) duration = Math.max(duration, w.t);
-  return { name: step.name, tracks, duration: step.duration ?? duration };
+  return { name: step.name, image: step.image || null, tracks, duration: step.duration ?? duration };
 }
 
 /**

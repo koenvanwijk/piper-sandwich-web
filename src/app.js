@@ -6,6 +6,7 @@ import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from
 import { ArmIK } from './ik.js';
 import { HandTeleop } from './teleop.js';
 import { mat2quat } from './qmath.js';
+import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 
 const SIDES = ['left', 'right'];
@@ -114,41 +115,40 @@ class SandwichVR {
     if (DEMO) this.initDemo();
 
     this.renderer.setAnimationLoop(() => this.frame());
-    setStatus(DEMO ? 'Demo: broodje smeren — start…'
+    setStatus(DEMO ? 'Demo: ' + this.demo.stepName
                    : 'Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
   }
 
   // Demo "broodje smeren" (src/sandwich-motion.js). Alleen aangeroepen bij ?demo=1.
   initDemo() {
     relaxBaseContacts(this.model);      // zie uitleg in sandwich-motion.js (base/link1-overlap)
-    this._demoBuild = () => {
+    const build = () => {
       const objects = readObjectPositions(this.mujoco, this.model, this.data);
       return new MotionPlayer(this, makeSandwichChoreography({ objects }), {
-        onStep: name => setStatus('Demo: ' + name),
-        onDone: () => setStatus('Demo: klaar — klik op "Opnieuw" om te herhalen'),
+        speed: Number(new URLSearchParams(location.search).get('speed')) || 1,   // ?demo=1&speed=2 = sneller
+        onStep: (name, i) => { setStatus('Demo: ' + name); if (this._demoUI) this._demoUI.setStep(i); },
+        onDone: () => { setStatus('Demo: klaar — klik op "Opnieuw" om te herhalen');
+                        if (this._demoUI) this._demoUI.setDone(); },
       });
     };
-    this.demo = this._demoBuild();
-    const mk = (label, right, fn) => {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.style.cssText = `position:fixed;bottom:12px;${right};z-index:10;padding:6px 12px;` +
-        'font:14px sans-serif;border-radius:6px;border:0;background:#2b7;color:#fff;cursor:pointer';
-      b.onclick = fn; document.body.appendChild(b); return b;
-    };
-    const pause = mk('Pauze', 'right:12px', () => {
-      this.demo.paused ? this.demo.resume() : this.demo.pause();
-      pause.textContent = this.demo.paused ? 'Verder' : 'Pauze';
+    this.demo = build();
+    const steps = this.demo.steps;
+    this._demoUI = createDemoPanel({
+      names: steps.map(s => s.name),
+      images: steps.map(s => s.image && new URL('../' + s.image, import.meta.url).href),
+      onPause: () => this.demo.pause(),
+      onResume: () => this.demo.resume(),
+      onRestart: () => {
+        // scene terug naar de 'home'-keyframe en choreografie herstarten
+        this.mujoco.mj_resetData(this.model, this.data);
+        if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
+        this.mujoco.mj_forward(this.model, this.data);
+        for (const s of SIDES) { this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0; }
+        this.demo = build();
+        this._demoUI.setStep(0);
+      },
     });
-    mk('Opnieuw', 'right:90px', () => {
-      // scene terug naar de 'home'-keyframe en choreografie herstarten
-      this.mujoco.mj_resetData(this.model, this.data);
-      if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
-      this.mujoco.mj_forward(this.model, this.data);
-      for (const s of SIDES) { this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0; }
-      this.demo = this._demoBuild();
-      pause.textContent = 'Pauze';
-    });
+    this._demoUI.setStep(0);
   }
 
   tcpPose(side) {
