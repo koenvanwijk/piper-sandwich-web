@@ -57,6 +57,55 @@ To toe the two arm bases inward permanently, set `ARM_YAW` in the scene builder
 
 Everything runs locally in the headset — physics, IK and rendering.
 
+## Demo: broodje smeren
+
+Een vaste, herhaalbare voorbeeldbeweging ("choreografie") waarin de twee armen een broodje
+smeren: (1) ingrediënten verzamelen (rechts pakt het mes, links gaat boven de pot staan),
+(2) boter smeren met het mes over `bread0`, (3) beleg toevoegen (linkerarm brengt beleg van de
+pot naar het brood), (4) broodje sluiten (mes terug op het bord `plate`, `bread1` bovenop `bread0`).
+
+**Starten**
+
+- In de browser: open de pagina met `?demo=1` (bv. `http://127.0.0.1:8092/?demo=1`). De huidige
+  stap staat in het statusveld linksboven; er komen knoppen *Pauze/Verder* en *Opnieuw*.
+  Zonder `?demo=1` verandert er niets (teleop werkt zoals altijd). Tijdens de demo is teleop uit.
+- Headless (Node, echte MuJoCo-WASM, zonder three.js):
+  `node tools/run-sandwich-demo.mjs` (optioneel `--json`). Logt per stap de maximale
+  TCP-fout, of het mes optilt, of boter/brood verschuift en of `bread1` op `bread0` ligt.
+
+**Stappen aanpassen** — alles staat in `src/sandwich-motion.js`:
+
+- `makeSandwichChoreography({ objects, tuning })` bouwt de stappen. Objectposities komen uit het
+  model (`readObjectPositions`) of uit `DEFAULT_OBJECTS`; verschuif je een object in `scene.xml`,
+  dan volgt de choreografie vanzelf.
+- Constanten (hoogtes, gripper-oriëntatie per arm, smeer-slag, greeptijd) staan in `TUNING`/`GEOM`
+  bovenaan en zijn te overschrijven via `tuning`.
+- Een stap is `{ name, tracks: { left: [...], right: [...] } }` (armen parallel) of
+  `{ name, arm, waypoints }`; een waypoint is `{ pos:[x,y,z], quat?, grip?, t }` (`t` = seconden vanaf
+  het begin van de stap, `grip` 0 = open .. 1 = dicht). Stappen lopen na elkaar.
+- `MotionPlayer(env, steps, { onStep, onDone, speed })` met `update(dt)`, `pause()`, `resume()`,
+  `reset()` en `done`; `env` = `{ ik, qTarget, grip, tcpPose }` (de velden van `SandwichVR`).
+
+**Bekende beperkingen** (gemeten met het headless-script, zie de PR voor de cijfers)
+
+- **Mes pakken lukt maar half betrouwbaar.** De gripper opent ~7 cm en het handvat is 2 cm breed en
+  1,6 cm dik; in de simulatie tilt het mes wel mee (ruim 10 cm), maar het kantelt in de klem
+  (pitch tot ~60°) en schuift. Het werkt alleen met de vaste greeppositie/oriëntatie uit `TUNING`;
+  kleine afwijkingen laten het mes vaak liggen. Het smeren is een bewegingsdemonstratie: het blad
+  zweeft vlak boven het brood (blad-z ~5 cm bij de mes-oorsprong, met kanteling); er wordt dus niet
+  echt "gesmeerd". De boterblokjes verschuiven wel (gem. ~18 mm, max ~56 mm in stap 2), maar het script
+  kan niet onderscheiden of dat door het mes komt of doordat blokjes van het brood rollen.
+- **Beleg is niet fysiek**: er zit geen beleg in de pot in `scene.xml`; de linkerarm "schept" met
+  de gripper en opent boven het brood.
+- **`bread1` grijpen lukt niet**: platliggend brood (9 cm) is breder dan de opening van de gripper
+  (~7 cm), en een hoekklem hield in geen enkele geteste combinatie. `bread1` wordt daardoor niet
+  op `bread0` gelegd (het script meldt dit eerlijk en eindigt met exitcode 2); de armbeweging
+  zelf (pakken, transporteren, boven `bread0` loslaten) is wel correct.
+- De demo zet in de browser (en in het script) botsingen van de statische basis-meshes uit
+  (`relaxBaseContacts`): base_link en link1 overlappen ~6 mm in `scene.xml`, waardoor joint1 anders
+  vastklemt en de armen niet zijwaarts kunnen zwenken.
+- Linkerarm heeft in stap 3 tot ~37 mm TCP-fout rond de pot (gewrichtslimieten bij een neerwaartse tool).
+
 ## How it works
 
 ```

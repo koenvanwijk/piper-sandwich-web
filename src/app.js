@@ -6,8 +6,11 @@ import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from
 import { ArmIK } from './ik.js';
 import { HandTeleop } from './teleop.js';
 import { mat2quat } from './qmath.js';
+import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 
 const SIDES = ['left', 'right'];
+// Demo (choreografie) is alleen actief met ?demo=1 in de URL; zonder verandert er niets.
+const DEMO = new URLSearchParams(location.search).get('demo') === '1';
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -108,8 +111,44 @@ class SandwichVR {
       this._mocap[s] = this.model.body_mocapid[bid];
     }
 
+    if (DEMO) this.initDemo();
+
     this.renderer.setAnimationLoop(() => this.frame());
-    setStatus('Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
+    setStatus(DEMO ? 'Demo: broodje smeren — start…'
+                   : 'Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
+  }
+
+  // Demo "broodje smeren" (src/sandwich-motion.js). Alleen aangeroepen bij ?demo=1.
+  initDemo() {
+    relaxBaseContacts(this.model);      // zie uitleg in sandwich-motion.js (base/link1-overlap)
+    this._demoBuild = () => {
+      const objects = readObjectPositions(this.mujoco, this.model, this.data);
+      return new MotionPlayer(this, makeSandwichChoreography({ objects }), {
+        onStep: name => setStatus('Demo: ' + name),
+        onDone: () => setStatus('Demo: klaar — klik op "Opnieuw" om te herhalen'),
+      });
+    };
+    this.demo = this._demoBuild();
+    const mk = (label, right, fn) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = `position:fixed;bottom:12px;${right};z-index:10;padding:6px 12px;` +
+        'font:14px sans-serif;border-radius:6px;border:0;background:#2b7;color:#fff;cursor:pointer';
+      b.onclick = fn; document.body.appendChild(b); return b;
+    };
+    const pause = mk('Pauze', 'right:12px', () => {
+      this.demo.paused ? this.demo.resume() : this.demo.pause();
+      pause.textContent = this.demo.paused ? 'Verder' : 'Pauze';
+    });
+    mk('Opnieuw', 'right:90px', () => {
+      // scene terug naar de 'home'-keyframe en choreografie herstarten
+      this.mujoco.mj_resetData(this.model, this.data);
+      if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
+      this.mujoco.mj_forward(this.model, this.data);
+      for (const s of SIDES) { this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0; }
+      this.demo = this._demoBuild();
+      pause.textContent = 'Pauze';
+    });
   }
 
   tcpPose(side) {
@@ -193,7 +232,14 @@ class SandwichVR {
 
     const cmds = this.readControllers();
     let anyEngaged = false;
-    for (const s of SIDES) {
+    if (this.demo && !this.demo.done) {
+      // Demo bestuurt beide armen; teleop-invoer wordt tijdens de demo genegeerd.
+      this.demo.update(frameDt);
+      for (const s of SIDES) if (this._mocap[s] >= 0 && this.demo.cmd) {
+        const a = this._mocap[s] * 3, p = this.demo.cmd[s].pos;
+        this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
+      }
+    } else for (const s of SIDES) {
       const t = this.teleop[s].step(cmds[s], this.tcpPose(s));
       if (t.engaged) {
         this.qTarget[s] = this.ik[s].solve(this.qTarget[s], t.pos, t.quat, 3);
