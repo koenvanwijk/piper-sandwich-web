@@ -115,6 +115,40 @@ gripper tegen `bread0` aan schuiven — *niet* bovenop leggen, zie beperkingen).
   vastklemt en de armen niet zijwaarts kunnen zwenken.
 - Linkerarm heeft in stap 3 tot ~37 mm TCP-fout rond de pot (gewrichtslimieten bij een neerwaartse tool).
 
+## Recording client (opt-in, `?rec=`)
+
+Fase 1 van `DESIGN-vr-recording.md`: de browser kan elke simulatietick naar een server sturen (bv. de robot-pc die er
+later een LeRobot-dataset van maakt). **Zonder `?rec` verandert er niets** (teleop, `?demo=1`, VR: zelfde loop en
+2 ms-fysica). Er is hier nog geen echte server, geen PiperSimRobot en geen upload.
+
+```
+https://…/?rec=wss://host/ws#token=GEHEIM            teleop + opname
+https://…/?demo=1&rec=wss://host/ws&cams=front#token=GEHEIM
+```
+
+- Parameters: `rec` (alleen `wss://`, of `ws://` naar localhost), `cams` (standaard `front,top`; uit `scene.xml`; leeg = geen
+  beeld), `camsize` (standaard `640x480`), `camq` (JPEG-kwaliteit 0.1–1, standaard 0.8).
+- **Token** alleen in het URL-fragment (`#token=`, gaat niet naar servers of logs); het wordt na lezen uit de adresbalk
+  gehaald en in `sessionStorage` van dit tabblad bewaard voor herverbinden. Het wordt niet gelogd of in het badge getoond.
+- **Vaste tijdstap:** met `?rec` is 1 tick exact 1/30 s sim-tijd (16 × 2,083 ms fysica-stappen; `seq`/30 = `t_sim`). Bij een
+  te trage client loopt de sim langzamer (max. 3 ticks per frame) in plaats van tijd over te slaan.
+- **Berichten** (client → server):
+  - `hello` (JSON, eerst): `proto`, `fps`, `dt`, `physics_timestep`, `scene_hash`, `state_names` (14), `action_names`,
+    `units`, `cameras`, `objects_dynamic`, `objects_static`, `token`, `session`, `reconnect`. Server antwoordt `welcome`.
+  - `state` (JSON, per tick): `seq` (+1 per tick), `t_sim`, `t_client_ms`, `state[14]` (per arm joint1–6 in rad + gripper 0 open…1 dicht;
+    **gemeten** vóór de actie), `action[14]` (`qTarget` + gripper-commando), `tcp{left,right:{pos,quat}}`,
+    `ctrl{left,right:{trigger,grip,engaged,pos,quat,buttons,axes}}`, `objects{naam:[x,y,z,qw,qx,qy,qz]}`, `xr`, `demo_step`.
+  - `ping`/`pong` (elke 2 s; RTT in `rtt_ms`; 6 s zonder pong → herverbinden).
+  - Beeld (binair, per camera per tick, alleen als de verzendbuffer leeg genoeg is): `[u32 seq LE][u8 cam_id][u8 formaat 0=JPEG][u16 0][JPEG]`;
+    `cam_id` = index in `hello.cameras`, `seq` = tick waarin gerenderd.
+- **Reconnect:** exponentiële backoff 0,5 → 10 s met jitter; `4401`/`4403` (auth/origin) = niet blijven proberen.
+  Tijdens offline worden ticks niet gebufferd maar geteld (`drop_*`); `seq` loopt door (server ziet een gat) — de sim zelf pauzeert niet.
+- Badge rechtsboven toont verbindingsstatus. Debug: `sandwichVR.rec.client.stats`.
+- **Testserver:** `REC_TOKEN=geheim node tools/rec-echo-server.mjs --port=8765` (Node ≥ 18, geen dependencies, geen TLS,
+  controleert `seq`/14 waarden/JPEG en schrijft een rapport met `--report=`). Dan `http://localhost:8000/?rec=ws://127.0.0.1:8765/ws#token=geheim`.
+- **Beperkingen:** de offscreen-render is zwaar in software-GL (headless ±7–16 Hz beeld); op de Quest niet gemeten. Beeld is
+  dus mogelijk niet elke tick beschikbaar (een camera die nog bezig is wordt overgeslagen).
+
 ## How it works
 
 ```
@@ -158,9 +192,10 @@ src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
 src/qmath.js          quaternion helpers
 src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless)
+src/recorder-client.js WebSocket-opname-client (?rec=), src/rec-state.js toestand/seq, src/rec-capture.js JPEG-camera's
 src/demo-ui.js        demo-paneel (stappenlijst, plaatje, Pauze/Opnieuw), alleen bij ?demo=1
 demo/step-*.svg       stap-illustraties (tools/make-step-images.py)
-tools/                headless MuJoCo-test van de demo
+tools/                headless MuJoCo-test van de demo, rec-echo-server.mjs (testserver opname)
 src/scene-loader.js   MuJoCo model → three.js meshes (adapted from zalo/mujoco_wasm)
 assets/scene.xml      the sandwich scene (shared with the Python sim)
 assets/meshes/*.STL   Piper link meshes
