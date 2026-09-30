@@ -89,3 +89,26 @@ def test_dry_run_and_mock_push(ds_root, monkeypatch, tmp_path):
     # 5. lege/ongeldige map
     with pytest.raises(hub.PushError):
         hub.push(tmp_path / "leeg", "koen/piper-test", dry_run=True)
+
+
+def test_reset_cmd_discards_running_episode(tmp_path, jpg):
+    """Fase 3: `reset` (Y-knop / scene-reset) bewaart een lopende episode nooit; zonder episode is het een no-op + event."""
+    events = []
+    rec = EpisodeRecorder(PiperSimRobotConfig(port=0, **CFG), tmp_path / "ds", "t/ds", "t", on_event=lambda **e: events.append(e))
+    rec.on_cmd({"cmd": "reset"})                                     # IDLE: alleen scene_reset-event
+    rec.on_cmd({"cmd": "start"})
+    for s in range(0, 6):
+        rec.on_tick(tick(s, jpg(64, 48)))
+    rec.on_cmd({"cmd": "reset"})                                     # RECORDING: weggooien
+    rec.on_cmd({"cmd": "start"})
+    for s in range(10, 16):
+        rec.on_tick(tick(s, jpg(64, 48)))
+    rec.on_cmd({"cmd": "success", "value": True})
+    rec.on_cmd({"cmd": "stop", "success": True})
+    rec.on_cmd({"cmd": "status"})
+    rec.close()
+    names = [e["event"] for e in events]
+    assert names.count("scene_reset") == 2 and names.count("episode_discarded") == 1 and names.count("episode_saved") == 1
+    assert len(rec.saved) == 1 and rec.saved[0]["success"] is True and rec.saved[0]["episode_index"] == 0
+    st = [e for e in events if e["event"] == "status"][-1]
+    assert st["next_episode"] == 1 and st["episodes_saved"] == 1
