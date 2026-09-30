@@ -182,6 +182,23 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
   `xr-standard`-profiel), HUD-zichtbaarheid en haptiek in VR zijn alleen uit de code/spec afgeleid en met gesimuleerde gamepads
   in headless Chrome getest.
 
+## Controller mapping (teleop) & debugging
+
+- **Mapping:** controller pose (WebXR `gripSpace`, reference space `local-floor`: x right, y up, −z forward) → scene-root local
+  frame (inverse of the thumbstick-rotated root) → MuJoCo (z up). With the default view the user sits between the arms looking at the
+  board: user-forward = MuJoCo +x, user-right = MuJoCo −y, up = +z. The **left** controller drives the `left` arm (y = +0.22 = user's left).
+- **Fix (this branch):** `relaxBaseContacts()` (base_link ↔ link1 overlap that pinned `joint1`) used to run only in the demo; the
+  teleop path had it missing, so the arms could hardly swing sideways and moved *opposite/mirrored* when you moved sideways. Now always applied.
+  Test: `node tools/test-teleop-mapping.mjs` (MuJoCo-wasm, simulated controllers: 10 cm right/left/forward/up/down → TCP moves the same way,
+  ≤ 1 mm error; also reproduces the old bug and checks the scene-rotated case).
+- **Orientation (`?rot=1`):** the TCP orientation follows the controller's rotation *relative to the moment the clutch (grip) was pressed*
+  (`HandTeleop`, `lockOrientation: false`). Simulated: a 30° yaw / 25° pitch / 25° roll of the controller rotates the TCP axes to within ~1° of the same
+  world rotation (limited by joint ranges). Default stays locked.
+- **`?debug=1`:** overlay (DOM + head-locked panel in VR) per controller: handedness, profile, world pose, scene-local pose (MuJoCo), clutch,
+  target TCP, actual TCP and Δ. Move a controller 20 cm to the right: `Δ`/`doel` y must go to −0.2 (MuJoCo) and the arm must follow.
+- **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
+  instead of the fixed −z of the reference space.
+
 ## How it works
 
 ```
@@ -228,7 +245,7 @@ src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless
 src/recorder-client.js WebSocket-opname-client (?rec=), src/rec-state.js toestand/seq, src/rec-capture.js JPEG-camera's
 src/demo-ui.js        demo-paneel (stappenlijst, plaatje, Pauze/Opnieuw), alleen bij ?demo=1
 demo/step-*.svg       stap-illustraties (tools/make-step-images.py)
-tools/                headless MuJoCo-test van de demo, rec-echo-server.mjs (testserver opname)
+tools/                headless MuJoCo-test van de demo, test-teleop-mapping.mjs (controller→TCP-richtingen), rec-echo-server.mjs (testserver opname)
 src/scene-loader.js   MuJoCo model → three.js meshes (adapted from zalo/mujoco_wasm)
 assets/scene.xml      the sandwich scene (shared with the Python sim)
 assets/meshes/*.STL   Piper link meshes
@@ -248,8 +265,8 @@ vendor/mujoco/        official MuJoCo WASM engine (mujoco.js + mujoco.wasm)
 
 ## Known limitations & next steps
 
-- Wrist orientation is **locked** by default (arm keeps the engage-time pose);
-  flip `lockOrientation` to map controller rotation for full 6-DoF teleop.
+- Wrist orientation is **locked** by default (arm keeps the engage-time pose). `?rot=1` maps the controller's rotation
+  *relative to the clutch moment* onto the TCP (see "Controller mapping" below). Not yet tried on a real Quest.
 - **Grasping** small props needs fingertip collision tuning (same as the Python
   sim); good next step for actually assembling the sandwich.
 - **Butter is spreadable**: a heap of many small high-friction pats the knife
