@@ -8,10 +8,15 @@ import { HandTeleop } from './teleop.js';
 import { mat2quat } from './qmath.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
+import { parseRecConfig } from './recorder-client.js';
+import { ctrlSummary } from './rec-state.js';
 
 const SIDES = ['left', 'right'];
 // Demo (choreografie) is alleen actief met ?demo=1 in de URL; zonder verandert er niets.
 const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+// Opname (WebSocket-recorder) is alleen actief met ?rec=wss://host/ws#token=... (zie README "Recording client").
+// Zonder ?rec verandert er niets aan de frame-loop (rec-capture.js wordt dan niet geladen; recorder-client.js/rec-state.js zijn klein en zonder bijwerkingen).
+const RECCFG = parseRecConfig();
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -113,6 +118,7 @@ class SandwichVR {
     }
 
     if (DEMO) this.initDemo();
+    if (RECCFG) await this.initRec();
 
     this.renderer.setAnimationLoop(() => this.frame());
     setStatus(DEMO ? 'Demo: ' + this.demo.stepName
@@ -151,6 +157,47 @@ class SandwichVR {
     this._demoUI.setStep(0);
   }
 
+  // Opname-client (alleen met ?rec). Modules worden dynamisch geladen, zodat de normale pagina ongewijzigd blijft.
+  async initRec() {
+    if (RECCFG.error) { console.warn('[rec] ' + RECCFG.error); setStatus('REC uit: ' + RECCFG.error); return; }
+    const [{ RecStateSampler, fnv1a, stateNames, REC_FPS, REC_DT, REC_SUBSTEPS, PROTO_VERSION },
+           { RecorderClient, createRecBadge },
+           { CameraCapture }] = await Promise.all([
+      import('./rec-state.js'), import('./recorder-client.js'), import('./rec-capture.js')]);
+    const cfg = RECCFG.cfg;
+    const sampler = new RecStateSampler(this);
+    const sceneXml = await (await fetch(new URL('../assets/scene.xml', import.meta.url))).text();
+    const capture = cfg.cams.length ? new CameraCapture(this, cfg.cams, { w: cfg.camW, h: cfg.camH, quality: cfg.camQuality }) : null;
+    // vaste tijdstap: 16 substappen van (1/30)/16 s = 2,083 ms (in plaats van 2 ms) zodat 1 tick exact 1/30 s is
+    this._recDtPhys = REC_DT / REC_SUBSTEPS;
+    this.model.opt.timestep = this._recDtPhys;
+    const setBadge = createRecBadge(cfg.host);
+    const client = new RecorderClient({
+      url: cfg.url, token: cfg.token, onStatus: setBadge,
+      helloFn: () => ({ type: 'hello', proto: PROTO_VERSION, app: 'piper-sandwich-web', fps: REC_FPS, dt: REC_DT,
+        physics_timestep: this._recDtPhys, substeps: REC_SUBSTEPS, mode: DEMO ? 'demo' : 'teleop',
+        scene_hash: fnv1a(sceneXml), state_names: stateNames(), action_names: stateNames(),
+        units: { joint: 'rad', gripper: 'norm 0=open..1=closed', pos: 'm', quat: 'wxyz (MuJoCo frame)' },
+        cameras: capture ? capture.info : [], objects_dynamic: sampler.dynamic.map(b => b.name),
+        objects_static: sampler.staticObjects(), frame_format: '[u32 seq LE][u8 cam_id][u8 fmt 0=jpeg][u16 0][jpeg]' }),
+    });
+    this.rec = { sampler, capture, client, seq: 0, tSim: 0, acc: 0, cfg, ticks: 0 };
+    client.start();
+  }
+
+  // Eén opname-tick = exact REC_DT aan simulatietijd: observatie -> actie (teleop/demo + IK) -> 16 fysica-stappen -> versturen.
+  recTick(cmds, dt) {
+    const r = this.rec, obs = r.sampler.observe();
+    const anyEngaged = this.control(cmds, dt);
+    for (let i = 0; i < 16; i++) this.mujoco.mj_step(this.model, this.data);
+    const seq = r.seq++; r.tSim = r.seq * dt; r.ticks++;
+    r.client.sendState({ type: 'state', seq, t_sim: +(seq * dt).toFixed(6), t_client_ms: +performance.now().toFixed(1),
+      state: obs.state, action: r.sampler.action(), tcp: obs.tcp, ctrl: ctrlSummary(cmds, this.teleop),
+      objects: obs.objects, xr: this.renderer.xr.isPresenting, demo_step: this.demo ? this.demo.index : null });
+    if (r.capture && r.client.wantFrames()) { this.syncScene(); r.capture.grab((camId, ab) => r.client.sendFrame(seq, camId, ab)); }
+    return anyEngaged;
+  }
+
   tcpPose(side) {
     const s = this.ik[side].site, d = this.data;
     const m = []; for (let k = 0; k < 9; k++) m.push(d.site_xmat[9 * s + k]);
@@ -180,6 +227,7 @@ class SandwichVR {
       const btn = i => (gp && gp.buttons[i]) ? gp.buttons[i].value : 0;
       const raw = { pos: [lp.x, lp.y, lp.z], quat: [lq.w, lq.x, lq.y, lq.z],
                     trigger: btn(0), grip: btn(1) };
+      if (this.rec && gp) { raw.buttons = gp.buttons.map(b => +b.value.toFixed(3)); raw.axes = Array.from(gp.axes); }
       if (src.handedness === 'left') out.left = raw;
       else if (src.handedness === 'right') out.right = raw;
     }
@@ -223,18 +271,12 @@ class SandwichVR {
     r.updateMatrixWorld(true);
   }
 
-  frame() {
-    const now = performance.now() / 1000;
-    const frameDt = Math.min(0.05, now - this._last);
-
-    // navigate / orient the scene with the thumbsticks first
-    this.applyNav(this.readNav(), frameDt);
-
-    const cmds = this.readControllers();
+  // Arm-aansturing voor één stap van `dt` seconden: demo of teleop -> IK -> ctrl. Geeft terug of een arm 'engaged' is.
+  control(cmds, dt) {
     let anyEngaged = false;
     if (this.demo && !this.demo.done) {
       // Demo bestuurt beide armen; teleop-invoer wordt tijdens de demo genegeerd.
-      this.demo.update(frameDt);
+      this.demo.update(dt);
       for (const s of SIDES) if (this._mocap[s] >= 0 && this.demo.cmd) {
         const a = this._mocap[s] * 3, p = this.demo.cmd[s].pos;
         this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
@@ -254,14 +296,11 @@ class SandwichVR {
       }
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
+    return anyEngaged;
+  }
 
-    // real-time-ish physics stepping
-    this._acc += frameDt; this._last = now;
-    const dt = this.model.opt.timestep;
-    let n = 0;
-    while (this._acc >= dt && n < 30) { mujoco.mj_step(this.model, this.data); this._acc -= dt; n++; }
-
-    // push MuJoCo transforms into three.js
+  // Push MuJoCo transforms into three.js.
+  syncScene() {
     for (let b = 0; b < this.model.nbody; b++) {
       if (this.bodies[b]) {
         getPosition(this.data.xpos, b, this.bodies[b].position);
@@ -276,6 +315,32 @@ class SandwichVR {
       }
     }
     drawTendonsAndFlex(this.mujocoRoot, this.model, this.data);
+  }
+
+  frame() {
+    const now = performance.now() / 1000;
+    const frameDt = Math.min(0.05, now - this._last);
+
+    // navigate / orient the scene with the thumbsticks first
+    this.applyNav(this.readNav(), frameDt);
+
+    const cmds = this.readControllers();
+    if (this.rec) {
+      // vaste tijdstap: per tick precies 1/30 s simulatietijd; bij een trage client loopt de sim langzamer (max 3 ticks/frame)
+      const dt = 1 / 30, r = this.rec; r.acc += frameDt; this._last = now;
+      let n = 0;
+      while (r.acc >= dt && n < 3) { this.recTick(cmds, dt); r.acc -= dt; n++; }
+      if (r.acc > 3 * dt) r.acc = 0;
+    } else {
+      this.control(cmds, frameDt);
+      // real-time-ish physics stepping
+      this._acc += frameDt; this._last = now;
+      const dt = this.model.opt.timestep;
+      let n = 0;
+      while (this._acc >= dt && n < 30) { mujoco.mj_step(this.model, this.data); this._acc -= dt; n++; }
+    }
+
+    this.syncScene();
 
     if (!this.renderer.xr.isPresenting) this.controls.update();
     this.renderer.render(this.scene, this.camera);
