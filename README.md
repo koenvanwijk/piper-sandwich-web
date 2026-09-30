@@ -144,6 +144,7 @@ https://…/?demo=1&rec=wss://host/ws&cams=front#token=GEHEIM
 - **Reconnect:** exponentiële backoff 0,5 → 10 s met jitter; `4401`/`4403` (auth/origin) = niet blijven proberen.
   Tijdens offline worden ticks niet gebufferd maar geteld (`drop_*`); `seq` loopt door (server ziet een gat) — de sim zelf pauzeert niet.
 - Badge rechtsboven toont verbindingsstatus. Debug: `sandwichVR.rec.client.stats`.
+- **Python-server (fase 2):** `server/` bevat de echte opname-server, een LeRobot-`Robot`-plugin en de optionele (standaard uitgeschakelde) Hugging Face-upload, zie `server/README.md`.
 - **Testserver:** `REC_TOKEN=geheim node tools/rec-echo-server.mjs --port=8765` (Node ≥ 18, geen dependencies, geen TLS,
   controleert `seq`/14 waarden/JPEG en schrijft een rapport met `--report=`). Dan `http://localhost:8000/?rec=ws://127.0.0.1:8765/ws#token=geheim`.
 - **Beperkingen:** de offscreen-render is zwaar in software-GL (headless ±7–16 Hz beeld); op de Quest niet gemeten. Beeld is
