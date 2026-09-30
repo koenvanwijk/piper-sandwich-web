@@ -47,7 +47,7 @@ You can re-orient the whole workspace and the arms without leaving VR:
 | **Right stick ↑/↓** | move it closer / further |
 | **Left stick ←/→** | slide the workspace left / right |
 | **Left stick ↑/↓** | raise / lower the table |
-| **A / X button** | recenter to the default view |
+| **A / X button** | recenter to the default view (with `?rec`: **thumbstick click** instead, see below) |
 
 The teleop stays correct no matter how you turn the scene: controller poses are
 transformed into the workspace's own frame before driving the arms.
@@ -149,6 +149,38 @@ https://…/?demo=1&rec=wss://host/ws&cams=front#token=GEHEIM
   controleert `seq`/14 waarden/JPEG en schrijft een rapport met `--report=`). Dan `http://localhost:8000/?rec=ws://127.0.0.1:8765/ws#token=geheim`.
 - **Beperkingen:** de offscreen-render is zwaar in software-GL (headless ±7–16 Hz beeld); op de Quest niet gemeten. Beeld is
   dus mogelijk niet elke tick beschikbaar (een camera die nog bezig is wordt overgeslagen).
+
+### Opname bedienen met de Quest-knoppen (fase 3, alleen met `?rec=`)
+
+Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsenbord. **Zonder `?rec` is alles ongewijzigd**
+(A/B/X/Y = recenter, geen HUD, geen extra modules geladen).
+
+| Knop | Actie |
+|---|---|
+| **A** (rechts) | start een episode; tijdens een episode: stop + bewaar (`success=false`) |
+| **B** (rechts) | episode **weggooien** + scene terug naar start |
+| **X** (links) | episode als **geslaagd** markeren, stoppen en bewaren (`success=true`) |
+| **Y** (links) | scene terug naar start; een lopende episode wordt **niet bewaard** (weggegooid) |
+| **Thumbstick-klik** (beide) | recenter (verhuisd van A/B/X/Y) |
+| Toetsen (desktop-test) | `S` start/stop · `D` weggooien + reset · `K` geslaagd + stop · `R` reset |
+
+- **HUD:** DOM-paneel linksonder (desktop) en een klein paneel dat aan het hoofd hangt (in VR, net onder het midden van het beeld;
+  het staat niet in de opgenomen camerabeelden). Toont `IDLE / RECORDING / SAVING / SAVED / DISCARDED / INTERRUPTED`,
+  episodenummer (= `episode_index` van de volgende/lopende episode in de dataset), verstreken tijd (sim-ticks/30) en de
+  verbindingsstatus. Het bewaren van een episode (video-encode) duurt enkele seconden; knoppen worden dan geblokkeerd.
+- **Haptiek:** korte puls op de controller bij start/stop/succes/weggooien, een korte zwakke puls bij een geblokkeerde
+  actie en dubbele puls bij een serverfout (feature-detect; geen fout als de controller het niet ondersteunt).
+- **Scene-reset** (`resetScene()` in `src/app.js`): `mj_resetData` + keyframe `home` + `mj_forward`, `qTarget`/gripper/teleop
+  (clutch) terug, bij `?demo=1` ook de choreografie vanaf stap 0. Zonder pagina-herlaad; de vaste tijdstap (16 × 2,083 ms) blijft en
+  `seq`/`t_sim` lopen door (geen seq-gat voor de server).
+- **Berichten** (browser → server): `cmd` met `start`, `stop{success}`, `success{value}`, `discard`, `reset`, `status`. De server
+  antwoordt met `event`-berichten (`episode_started`, `saving`, `episode_saved`, `episode_discarded`, `scene_reset`, `status`, `error`);
+  de HUD volgt die (de server is de bron van waarheid). Nieuw op de server: `reset` (gooit een lopende episode weg, nooit bewaren)
+  en `next_episode` in `status`.
+- **Tests:** `node tools/test-rec-controls.mjs` (knopdetectie met gesimuleerde gamepads + statemachine, geen dependencies).
+- **Niet op echte hardware getest:** de Quest-knoppen (knopindexen 3 = thumbstick, 4 = A/X, 5 = B/Y volgens het WebXR
+  `xr-standard`-profiel), HUD-zichtbaarheid en haptiek in VR zijn alleen uit de code/spec afgeleid en met gesimuleerde gamepads
+  in headless Chrome getest.
 
 ## How it works
 

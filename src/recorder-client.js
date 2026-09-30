@@ -43,13 +43,13 @@ export function encodeFrame(seq, camId, jpeg) {
 }
 
 export class RecorderClient {
-  constructor({ url, token, helloFn, onStatus = () => {}, onCmd = null, WS = globalThis.WebSocket }) {
-    this.url = url; this.token = token; this.helloFn = helloFn; this.onStatus = onStatus; this.onCmd = onCmd;
+  constructor({ url, token, helloFn, onStatus = () => {}, onCmd = null, onEvent = null, WS = globalThis.WebSocket }) {
+    this.url = url; this.token = token; this.helloFn = helloFn; this.onStatus = onStatus; this.onCmd = onCmd; this.onEvent = onEvent;
     this.WS = WS; this.ws = null; this.state = 'idle'; this.stopped = false;
     this.attempt = 0; this.timer = null; this.pingTimer = null;
     this.lastPong = 0; this.pingId = 0; this.session = Math.random().toString(36).slice(2, 10);
     this.stats = { tx_state: 0, tx_frames: 0, tx_bytes: 0, drop_state_offline: 0, drop_state_backpressure: 0,
-                   drop_frames_offline: 0, drop_frames_backpressure: 0, reconnects: 0, rtt_ms: null,
+                   drop_frames_offline: 0, drop_frames_backpressure: 0, tx_cmd: 0, drop_cmd_offline: 0, rx_events: 0, reconnects: 0, rtt_ms: null,
                    last_error: null };
   }
 
@@ -84,7 +84,11 @@ export class RecorderClient {
         this.lastPong = performance.now();
         if (typeof m.t_client_ms === 'number') this.stats.rtt_ms = +(performance.now() - m.t_client_ms).toFixed(1);
       } else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', id: m.id, t_client_ms: m.t_client_ms }));
-      else if (m.type === 'cmd' && this.onCmd) this.onCmd(m);       // fase 1: niet gebruikt
+      else if (m.type === 'cmd' && this.onCmd) this.onCmd(m);
+      else if (m.type === 'event') {                                // fase 3: episode-events van de server (HUD)
+        this.stats.rx_events++;
+        if (this.onEvent) { try { this.onEvent(m); } catch (e) { this.stats.last_error = 'onEvent: ' + (e.message || e); } }
+      }
     };
     ws.onerror = () => { this.stats.last_error = 'websocket-fout'; };
     ws.onclose = ev => {
@@ -122,6 +126,12 @@ export class RecorderClient {
     if (this.ws.bufferedAmount > 2 * 1024 * 1024) { this.stats.drop_state_backpressure++; return false; }
     const s = JSON.stringify(msg); this.ws.send(s);
     this.stats.tx_state++; this.stats.tx_bytes += s.length; return true;
+  }
+
+  /** Fase 3: commando naar de server (start|stop|discard|success|reset|status). false = niet verstuurd (offline). */
+  sendCmd(cmd, extra = {}) {
+    if (!this.ready) { this.stats.drop_cmd_offline++; return false; }
+    this.ws.send(JSON.stringify({ type: 'cmd', ...extra, cmd })); this.stats.tx_cmd++; return true;
   }
 
   sendFrame(seq, camId, jpeg) {

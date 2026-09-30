@@ -81,6 +81,12 @@ De upload is niet in deze PR tegen de echte Hub getest (alleen dry-run en mock).
 - Omvang: ≈ 0,65 MB voor 160 frames met één 320×240-camera (AV1, `crf 30`); reken op tientallen MB per uur bij twee 640×480-camera's (schatting, niet gemeten).
 - Privacy: de dataset bevat alleen sim-data (geen echte camerabeelden); toch standaard privé.
 
+## Commando's vanuit de browser (fase 3)
+
+De browser (Quest-knoppen A/B/X/Y of toetsen S/D/K/R, zie de hoofd-README) stuurt `cmd`-berichten: `start`, `stop` (`success`: bool),
+`success` (`value`), `discard`, `reset` (scene-reset in de browser; een lopende episode wordt weggegooid, nooit bewaard) en `status`
+(antwoord bevat o.a. `next_episode` = `episode_index` van de volgende episode). Alle antwoorden komen als `event`-berichten.
+
 ## Bestanden
 `lerobot_robot_piper_sim/` (plugin: `config`, `robot`, `bridge` = WS-server, `assembler`, `protocol`) · `piper_sim_recorder/` (`recorder`, `hub`, `cli`) ·
 `scripts/send_cmds.py` · `tests/`.

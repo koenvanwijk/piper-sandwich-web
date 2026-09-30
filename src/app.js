@@ -137,6 +137,7 @@ class SandwichVR {
                         if (this._demoUI) this._demoUI.setDone(); },
       });
     };
+    this._buildDemo = build;
     this.demo = build();
     const steps = this.demo.steps;
     this._demoUI = createDemoPanel({
@@ -162,8 +163,11 @@ class SandwichVR {
     if (RECCFG.error) { console.warn('[rec] ' + RECCFG.error); setStatus('REC uit: ' + RECCFG.error); return; }
     const [{ RecStateSampler, fnv1a, stateNames, REC_FPS, REC_DT, REC_SUBSTEPS, PROTO_VERSION },
            { RecorderClient, createRecBadge },
-           { CameraCapture }] = await Promise.all([
-      import('./rec-state.js'), import('./recorder-client.js'), import('./rec-capture.js')]);
+           { CameraCapture },
+           { RecController, EdgeDetector, keyAction, padActions },
+           { createRecHud }] = await Promise.all([
+      import('./rec-state.js'), import('./recorder-client.js'), import('./rec-capture.js'),
+      import('./rec-controls.js'), import('./rec-hud.js')]);
     const cfg = RECCFG.cfg;
     const sampler = new RecStateSampler(this);
     const sceneXml = await (await fetch(new URL('../assets/scene.xml', import.meta.url))).text();
@@ -172,8 +176,13 @@ class SandwichVR {
     this._recDtPhys = REC_DT / REC_SUBSTEPS;
     this.model.opt.timestep = this._recDtPhys;
     const setBadge = createRecBadge(cfg.host);
+    let connState = 'connecting';
+    const hud = createRecHud({ THREE, camera: this.camera, connLabel: () => connState });
+    let ctl = null;                                   // RecController (hieronder); de callbacks lopen via de closure
     const client = new RecorderClient({
-      url: cfg.url, token: cfg.token, onStatus: setBadge,
+      url: cfg.url, token: cfg.token,
+      onStatus: (st, msg) => { setBadge(st, msg); connState = st; if (ctl) ctl.onConn(st); },
+      onEvent: m => { if (ctl) ctl.onEvent(m); },
       helloFn: () => ({ type: 'hello', proto: PROTO_VERSION, app: 'piper-sandwich-web', fps: REC_FPS, dt: REC_DT,
         physics_timestep: this._recDtPhys, substeps: REC_SUBSTEPS, mode: DEMO ? 'demo' : 'teleop',
         scene_hash: fnv1a(sceneXml), state_names: stateNames(), action_names: stateNames(),
@@ -181,8 +190,61 @@ class SandwichVR {
         cameras: capture ? capture.info : [], objects_dynamic: sampler.dynamic.map(b => b.name),
         objects_static: sampler.staticObjects(), frame_format: '[u32 seq LE][u8 cam_id][u8 fmt 0=jpeg][u16 0][jpeg]' }),
     });
-    this.rec = { sampler, capture, client, seq: 0, tSim: 0, acc: 0, cfg, ticks: 0 };
+    this.rec = { sampler, capture, client, seq: 0, tSim: 0, acc: 0, cfg, ticks: 0, hud, padActions };
+    ctl = new RecController({
+      send: (cmd, extra) => client.sendCmd(cmd, extra),
+      resetScene: () => this.resetScene(),
+      seqNow: () => this.rec.seq,
+      haptic: (hand, intensity, ms, pulses) => this.haptic(hand, intensity, ms, pulses),
+      onChange: snap => hud.update(snap),
+    });
+    this.rec.ctl = ctl; this.rec.edges = new EdgeDetector(300);
+    hud.update(ctl.snapshot());
+    addEventListener('keydown', e => { const a = keyAction(e); if (a) { ctl.act(a, null); e.preventDefault(); } });
+    const hint = document.getElementById('hint');
+    if (hint) hint.innerHTML = 'Grip = clutch · Trigger = gripper &nbsp;|&nbsp; <b>REC</b>: A = start/stop+bewaar · B = weggooien+reset · ' +
+      'X = geslaagd (+stop) · Y = reset scene · stick-klik = recenter &nbsp;|&nbsp; toetsen: S · D · K · R';
     client.start();
+  }
+
+  // Scene terug naar de startstaat zonder de pagina te herladen (mj_resetData + keyframe 'home'). De vaste tijdstap
+  // blijft gelijk (model.opt.timestep wordt niet geraakt) en `seq`/t_sim lopen door, zodat de server geen gat ziet.
+  resetScene() {
+    const mj = this.mujoco;
+    mj.mj_resetData(this.model, this.data);
+    if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
+    mj.mj_forward(this.model, this.data);
+    for (const s of SIDES) {
+      this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0;
+      this.teleop[s] = new HandTeleop({ lockOrientation: true });       // clutch loslaten; volgende grip = nieuw anker
+      this.ik[s].apply(this.qTarget[s], this.grip[s]);
+    }
+    if (this._buildDemo) { this.demo = this._buildDemo(); if (this._demoUI) this._demoUI.setStep(0); }
+    this.syncScene();
+  }
+
+  // Haptische puls op de controller(s) (Quest): hand = 'left' | 'right' | null (beide). Feature-detect, nooit een fout.
+  haptic(hand, intensity = 0.5, ms = 60, pulses = 1) {
+    try {
+      const session = this.renderer.xr.getSession(); if (!session) return;
+      for (const src of session.inputSources) {
+        if (hand && src.handedness !== hand) continue;
+        const gp = src.gamepad; if (!gp) continue;
+        const act = (gp.hapticActuators && gp.hapticActuators[0]) || null;
+        const pulse = i => {
+          if (act && act.pulse) act.pulse(intensity, ms);
+          else if (gp.vibrationActuator && gp.vibrationActuator.playEffect)
+            gp.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: intensity, weakMagnitude: intensity });
+        };
+        for (let i = 0; i < pulses; i++) setTimeout(() => { try { pulse(i); } catch {} }, i * (ms + 60));
+      }
+    } catch { /* haptiek is optioneel */ }
+  }
+
+  // Knoppen van de Quest-controllers (rising edge) -> RecController. Alleen met ?rec.
+  pollRecButtons() {
+    const session = this.renderer.xr.getSession(); if (!session || !this.rec.ctl) return;
+    for (const a of this.rec.padActions(session.inputSources, this.rec.edges, performance.now())) this.rec.ctl.act(a.action, a.hand);
   }
 
   // Eén opname-tick = exact REC_DT aan simulatietijd: observatie -> actie (teleop/demo + IK) -> 16 fysica-stappen -> versturen.
@@ -194,7 +256,11 @@ class SandwichVR {
     r.client.sendState({ type: 'state', seq, t_sim: +(seq * dt).toFixed(6), t_client_ms: +performance.now().toFixed(1),
       state: obs.state, action: r.sampler.action(), tcp: obs.tcp, ctrl: ctrlSummary(cmds, this.teleop),
       objects: obs.objects, xr: this.renderer.xr.isPresenting, demo_step: this.demo ? this.demo.index : null });
-    if (r.capture && r.client.wantFrames()) { this.syncScene(); r.capture.grab((camId, ab) => r.client.sendFrame(seq, camId, ab)); }
+    if (r.capture && r.client.wantFrames()) {
+      this.syncScene();
+      r.hud.mesh.visible = false;               // het 3D-HUD hoort niet in de opgenomen camerabeelden
+      try { r.capture.grab((camId, ab) => r.client.sendFrame(seq, camId, ab)); } finally { r.hud.mesh.visible = true; }
+    }
     return anyEngaged;
   }
 
@@ -247,11 +313,11 @@ class SandwichVR {
       if (src.handedness === 'right') {
         nav.yaw += dz(ax(2));            // right stick L/R : spin the workspace
         nav.dist += dz(ax(3));           // right stick U/D : move it closer/further
-        if (pressed(4) || pressed(5)) nav.reset = true;   // A/B : recenter
+        if (this.rec ? pressed(3) : (pressed(4) || pressed(5))) nav.reset = true;   // A/B : recenter (met ?rec: thumbstick-druk; A/B = opname)
       } else if (src.handedness === 'left') {
         nav.strafe += dz(ax(2));         // left stick L/R : slide the workspace
         nav.height += dz(ax(3));         // left stick U/D : raise / lower the table
-        if (pressed(4) || pressed(5)) nav.reset = true;   // X/Y : recenter
+        if (this.rec ? pressed(3) : (pressed(4) || pressed(5))) nav.reset = true;   // X/Y : recenter (met ?rec: thumbstick-druk; X/Y = opname)
       }
     }
     return nav;
@@ -326,6 +392,8 @@ class SandwichVR {
 
     const cmds = this.readControllers();
     if (this.rec) {
+      this.pollRecButtons();
+      if (this.rec.ctl.state === 'RECORDING' && now - (this._hudT || 0) > 0.1) { this._hudT = now; this.rec.hud.update(this.rec.ctl.snapshot()); }
       // vaste tijdstap: per tick precies 1/30 s simulatietijd; bij een trage client loopt de sim langzamer (max 3 ticks/frame)
       const dt = 1 / 30, r = this.rec; r.acc += frameDt; this._last = now;
       let n = 0;

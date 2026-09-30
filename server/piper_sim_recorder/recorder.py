@@ -120,8 +120,10 @@ class EpisodeRecorder:
             self.q.put((cmd, {"success": m.get("success")}))
         elif cmd == "success":
             self.q.put(("success", {"value": bool(m.get("value", True))}))
-        elif cmd == "status":
-            self.on_event(event="status", **self.status())
+        elif cmd == "reset":                                       # scene-reset in de browser: lopende episode NOOIT bewaren
+            self.q.put(("reset", {}))
+        elif cmd == "status":                                      # via de queue: komt na eerdere start/stop/... aan de beurt
+            self.q.put(("status", {}))
         else:
             self.on_event(event="error", message=f"onbekend commando {cmd!r}")
 
@@ -129,7 +131,7 @@ class EpisodeRecorder:
         self.q.put(("interrupted", {}))
 
     def status(self) -> dict:
-        return {"state": self.state, "episodes_saved": len(self.saved), "discarded": self.discarded,
+        return {"state": self.state, "episodes_saved": len(self.saved), "next_episode": self.ds.meta.total_episodes, "discarded": self.discarded,
                 "frames_in_episode": self.cur.frames if self.cur else 0, "errors": self.errors[-3:]}
 
     def close(self, timeout: float = 300) -> None:
@@ -239,6 +241,14 @@ class EpisodeRecorder:
             self._discard("discard-commando")
         else:
             self.on_event(event="error", message="discard genegeerd: geen lopende episode")
+
+    def _h_status(self, a: dict) -> None:
+        self.on_event(event="status", **self.status())
+
+    def _h_reset(self, a: dict) -> None:
+        if self.state == "RECORDING":
+            self._discard("scene reset")
+        self.on_event(event="scene_reset")
 
     def _h_interrupted(self, a: dict) -> None:
         if self.state == "RECORDING":
