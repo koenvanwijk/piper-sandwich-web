@@ -10,6 +10,7 @@ import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 import { parseRecConfig } from './recorder-client.js';
 import { ctrlSummary } from './rec-state.js';
+import { mjToWorld, headYaw, homeFromHead } from './xr-map.js';
 
 const SIDES = ['left', 'right'];
 // Demo (choreografie) is alleen actief met ?demo=1 in de URL; zonder verandert er niets.
@@ -17,6 +18,10 @@ const DEMO = new URLSearchParams(location.search).get('demo') === '1';
 // Opname (WebSocket-recorder) is alleen actief met ?rec=wss://host/ws#token=... (zie README "Recording client").
 // Zonder ?rec verandert er niets aan de frame-loop (rec-capture.js wordt dan niet geladen; recorder-client.js/rec-state.js zijn klein en zonder bijwerkingen).
 const RECCFG = parseRecConfig();
+// ?debug=1: overlay met per controller handedness/pose/doel (zie src/debug-overlay.js). ?rot=1: controller-oriëntatie (relatief
+// vanaf de clutch) stuurt ook de TCP-oriëntatie aan; standaard blijft de pols-oriëntatie vergrendeld (zoals voorheen).
+const _Q = new URLSearchParams(location.search);
+const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _Q.get('headhome') === '1';
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -103,12 +108,17 @@ class SandwichVR {
     if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
     mujoco.mj_forward(this.model, this.data);
 
+    // FIX (links/rechts gespiegeld): base_link (world) overlapt ~6 mm met link1 en houdt joint1 vast (gemeten: joint1 blijft ~0 terwijl
+    // de actuator 0,8 rad vraagt). De IK-doelen zijn dan fysiek onbereikbaar en de arm beweegt zijwaarts de verkeerde kant op.
+    // Dit stond alleen in de demo (initDemo); teleop had het niet. Nu altijd (zie tools/test-teleop-mapping.mjs).
+    relaxBaseContacts(this.model);
+
     this.ik = {}; this.qTarget = {}; this.grip = {}; this.teleop = {};
     for (const s of SIDES) {
       this.ik[s] = new ArmIK(mujoco, this.model, this.data, s);
       this.qTarget[s] = this.ik[s].currentQ();
       this.grip[s] = 0.0;
-      this.teleop[s] = new HandTeleop({ lockOrientation: true });
+      this.teleop[s] = new HandTeleop({ lockOrientation: !ROT });
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
     this._mocap = {};
@@ -119,6 +129,7 @@ class SandwichVR {
 
     if (DEMO) this.initDemo();
     if (RECCFG) await this.initRec();
+    if (DEBUG) { const { createDebugOverlay } = await import('./debug-overlay.js'); this._dbg = createDebugOverlay({ THREE, camera: this.camera }); }
 
     this.renderer.setAnimationLoop(() => this.frame());
     setStatus(DEMO ? 'Demo: ' + this.demo.stepName
@@ -216,7 +227,7 @@ class SandwichVR {
     mj.mj_forward(this.model, this.data);
     for (const s of SIDES) {
       this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0;
-      this.teleop[s] = new HandTeleop({ lockOrientation: true });       // clutch loslaten; volgende grip = nieuw anker
+      this.teleop[s] = new HandTeleop({ lockOrientation: !ROT });       // clutch loslaten; volgende grip = nieuw anker
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
     if (this._buildDemo) { this.demo = this._buildDemo(); if (this._demoUI) this._demoUI.setStep(0); }
@@ -293,6 +304,7 @@ class SandwichVR {
       const btn = i => (gp && gp.buttons[i]) ? gp.buttons[i].value : 0;
       const raw = { pos: [lp.x, lp.y, lp.z], quat: [lq.w, lq.x, lq.y, lq.z],
                     trigger: btn(0), grip: btn(1) };
+      if (DEBUG) raw.world = [p.x, p.y, p.z];
       if (this.rec && gp) { raw.buttons = gp.buttons.map(b => +b.value.toFixed(3)); raw.axes = Array.from(gp.axes); }
       if (src.handedness === 'left') out.left = raw;
       else if (src.handedness === 'right') out.right = raw;
@@ -323,6 +335,44 @@ class SandwichVR {
     return nav;
   }
 
+  // OPT-IN (?headhome=1, niet op hardware getest): de scène staat vast t.o.v. de 'local-floor'-referentieruimte (kijkrichting -z). Keek u bij het
+  // starten van de sessie een andere kant op, dan zit u niet "tussen de armen, kijkend naar het bord". Met ?headhome=1 wordt de thuispositie bij
+  // sessiestart en bij elke recenter uit hoofdpositie + kijkrichting (yaw) berekend (xr-map.js). Standaard en buiten VR ongewijzigd.
+  homeToHead(nav) {
+    if (!HEADHOME) return;
+    if (!this.renderer.xr.isPresenting) { this._xrHomed = false; return; }
+    if (this._xrHomed && !nav.reset) return;
+    const cam = this.renderer.xr.getCamera(); cam.updateMatrixWorld(true);
+    const p = new THREE.Vector3(), q = new THREE.Quaternion();
+    cam.matrixWorld.decompose(p, q, new THREE.Vector3());
+    if (!(cam.cameras && cam.cameras.length) || (p.lengthSq() === 0 && q.w === 1)) return;   // nog geen geldige hoofdpose
+    const yaw = headYaw(q); if (yaw == null) return;
+    const h = homeFromHead([p.x, p.y, p.z], yaw);
+    this._homeView = { pos: new THREE.Vector3(h.pos[0], this._homeView.pos.y, h.pos[2]), rotY: h.rotY };
+    this.mujocoRoot.position.copy(this._homeView.pos); this.mujocoRoot.rotation.y = h.rotY;
+    this._xrHomed = true;
+  }
+
+  debugInfo() {
+    const out = { xr: this.renderer.xr.isPresenting, rot: ROT, rootRotY: this.mujocoRoot.rotation.y, headYaw: null, refSpace: null, sources: [], ctrl: {} };
+    const session = this.renderer.xr.getSession();
+    if (session) {
+      out.refSpace = this.renderer.xr.getReferenceSpace() ? 'local-floor (ingesteld in app.js)' : null;
+      for (const src of session.inputSources) out.sources.push({ handedness: src.handedness, profile: (src.profiles && src.profiles[0]) || '' });
+      const cam = this.renderer.xr.getCamera(); const q = new THREE.Quaternion(); cam.matrixWorld.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+      out.headYaw = headYaw(q);
+    }
+    const cmds = this._lastCmds || {};
+    for (const s of SIDES) {
+      const c = cmds[s]; if (!c) { out.ctrl[s] = null; continue; }
+      const t = (this._dbgT || {})[s], tcp = this.tcpPose(s).pos;
+      const tgt = t && t.engaged ? t.pos : null;
+      out.ctrl[s] = { world: c.world, mj: [c.pos[0], -c.pos[2], c.pos[1]], grip: c.grip, trigger: c.trigger,
+        engaged: this.teleop[s].engaged, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
+    }
+    return out;
+  }
+
   applyNav(nav, dt) {
     const r = this.mujocoRoot;
     if (nav.reset) {
@@ -349,6 +399,7 @@ class SandwichVR {
       }
     } else for (const s of SIDES) {
       const t = this.teleop[s].step(cmds[s], this.tcpPose(s));
+      if (DEBUG) (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
         this.qTarget[s] = this.ik[s].solve(this.qTarget[s], t.pos, t.quat, 3);
         this.grip[s] = t.grip;
@@ -388,9 +439,12 @@ class SandwichVR {
     const frameDt = Math.min(0.05, now - this._last);
 
     // navigate / orient the scene with the thumbsticks first
-    this.applyNav(this.readNav(), frameDt);
+    const nav = this.readNav();
+    this.homeToHead(nav);
+    this.applyNav(nav, frameDt);
 
     const cmds = this.readControllers();
+    if (DEBUG) this._lastCmds = cmds;
     if (this.rec) {
       this.pollRecButtons();
       if (this.rec.ctl.state === 'RECORDING' && now - (this._hudT || 0) > 0.1) { this._hudT = now; this.rec.hud.update(this.rec.ctl.snapshot()); }
@@ -409,6 +463,7 @@ class SandwichVR {
     }
 
     this.syncScene();
+    if (this._dbg) this._dbg.update(this.debugInfo());
 
     if (!this.renderer.xr.isPresenting) this.controls.update();
     this.renderer.render(this.scene, this.camera);
