@@ -199,6 +199,28 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
 - **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
   instead of the fixed −z of the reference space.
 
+## AprilTag detection (Quest camera, `table-ar/tags.html`)
+
+Detects **tag36h11** AprilTags in the headset's passthrough-camera stream, fully in the browser (WASM, no CDN).
+
+- **Library:** prebuilt WASM of [arenaxr/apriltag-js-standalone](https://github.com/arenaxr/apriltag-js-standalone) (BSD-3-Clause), which wraps
+  the [AprilTag C library](https://github.com/AprilRobotics/apriltag) (BSD-2-Clause), bundled unmodified in `vendor/apriltag/` (~190 KB; licences + SHA-256 in `NOTICE`).
+- **Code:** `src/apriltag-detector.js` (WASM wrapper, Browser + Node), `src/apriltag-camera.js` (getUserMedia, camera choice, frame loop via
+  `requestVideoFrameCallback`, grayscale, overlay), `table-ar/tags.html` (test page), hook in `table-ar/app.js` (existing buttons; the manual 3-point calibration is unchanged).
+- **On the Quest (not yet tried on a device by the author):**
+  1. Quest Browser **≥ 40.1**. If no camera shows up: `chrome://flags` → *Experimental web platform features* → on, restart the browser.
+  2. Open `https://<your-host>/table-ar/tags.html` (HTTPS is required for `getUserMedia`; plain `localhost` also works for desktop tests).
+     Useful params: `?camera=left|right|front|<label part>` · `&tagsize=0.10` (tag side in m → enables pose) · `&hfov=77` · `&autostart=1`.
+  3. Press **Start** and allow **Headset cameras** when asked (or: site settings → Headset cameras → Allow, reload). Only one site can use the camera at a time.
+  4. The page shows the camera image, a green frame + ID (+ distance) per tag, FPS / detection ms and the chosen device label. *Show cameras* lists
+     `enumerateDevices()` (expected labels like `camera 2 1, facing back` = left, `camera 2 2, facing back` = right).
+- **Pose:** needs the tag side length (`tagsize`) and camera intrinsics. The browser may expose focal length / principal point as metadata, but its exact
+  form is not documented: we look for `focal*/principal*` fields in `track.getSettings()` and otherwise fall back to a **rough estimate from `hfov`
+  (default 77°, a measured Quest 3 guess)** — so distances are approximate until calibrated. The pose is in the **camera frame**
+  (x right, y down, z forward); the browser gives no link between the camera image and the XR pose, so it is *not* a table/XR pose. Manual 3-point calibration stays authoritative.
+- **Tests:** `node tools/test-apriltag.mjs` (WASM in Node, synthetic tag36h11 images with known pose); optional headless Chrome with a fake camera:
+  `tools/make-tag-video.mjs` + `tools/test-apriltag-chrome.mjs`.
+
 ## How it works
 
 ```
@@ -245,7 +267,7 @@ src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless
 src/recorder-client.js WebSocket-opname-client (?rec=), src/rec-state.js toestand/seq, src/rec-capture.js JPEG-camera's
 src/demo-ui.js        demo-paneel (stappenlijst, plaatje, Pauze/Opnieuw), alleen bij ?demo=1
 demo/step-*.svg       stap-illustraties (tools/make-step-images.py)
-tools/                headless MuJoCo-test van de demo, test-teleop-mapping.mjs (controller→TCP-richtingen), rec-echo-server.mjs (testserver opname)
+tools/                headless MuJoCo-test van de demo, test-apriltag.mjs (AprilTag-detector), test-teleop-mapping.mjs (controller→TCP-richtingen), rec-echo-server.mjs (testserver opname)
 src/scene-loader.js   MuJoCo model → three.js meshes (adapted from zalo/mujoco_wasm)
 assets/scene.xml      the sandwich scene (shared with the Python sim)
 assets/meshes/*.STL   Piper link meshes

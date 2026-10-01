@@ -20,6 +20,22 @@ three.js
   Copyright: three.js authors
   https://github.com/mrdoob/three.js
 
+AprilTag WASM detector
+  vendor/apriltag/apriltag_wasm.js, vendor/apriltag/apriltag_wasm.wasm
+  Source: https://github.com/arenaxr/apriltag-js-standalone (commit f0fe556, prebuilt files from html/)
+  License: BSD 3-Clause, Copyright (c) 2020, The CONIX Research Center
+           (vendor/apriltag/LICENSE-apriltag-js-standalone.txt)
+  Embeds the AprilTag C library: https://github.com/AprilRobotics/apriltag
+  License: BSD 2-Clause, Copyright (C) 2013-2016, The Regents of The University of Michigan
+           (vendor/apriltag/LICENSE-apriltag-upstream.txt)
+  SHA-256: apriltag_wasm.js 587c3b98f7e9a312d9f69dbb541c91741f9ee2df10c356362b05243041e3ddea
+           apriltag_wasm.wasm 0283215c40f3bcd265d2650aeb0d4419e87222830fe8a31a1978401a4cac77aa
+  Used unmodified; src/apriltag-detector.js is our own wrapper (cwrap calls to the exported atagjs_* functions).
+
+tools/fixtures/tag36h11-patterns.json
+  Bit patterns of a few tag36h11 IDs, generated from the official codes with the npm package `apriltag`
+  (https://github.com/veggiedefender/apriltag-js, MIT, Copyright (c) 2024 Jesse Li); used only for synthetic test images.
+
 AgileX Piper model
   assets/scene.xml (two prefixed copies) and assets/meshes/*.STL
   Derived from the piper_description package in piper_ros.
