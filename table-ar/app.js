@@ -60,8 +60,13 @@ sandwichScene.init().then(() => {
   setStatus(`Sandwich scene failed to load: ${error.message}`);
 });
 
+// Tag-hook: alleen info (ID's); de handmatige 3-punts kalibratie blijft ongewijzigd en gezaghebbend.
+// ?tagsize=0.10 zet de pose-schatting aan, ?camera=left|right kiest de passthrough-camera (zie table-ar/tags.html).
+const tagParams = new URLSearchParams(location.search);
 const tagCamera = new AprilTagCamera(video, tagCanvas, {
   onStatus: setStatus,
+  camera: tagParams.get('camera') || 'auto',
+  tagSize: parseFloat(tagParams.get('tagsize')) || null,
   onDetections: detections => {
     if (!detections.length) return;
     detailsEl.textContent =
