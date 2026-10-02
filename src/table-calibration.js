@@ -6,6 +6,9 @@ const POS = new THREE.Vector3();
 const QUAT = new THREE.Quaternion();
 const SCALE = new THREE.Vector3();
 
+const DEFAULT_STYLE = { fill: 0x33aaff, opacity: 0.10, edge: 0xffffff };   // 3-punts kalibratie (ongewijzigd)
+const TAG_STYLE = { fill: 0x22dd77, opacity: 0.22, edge: 0xb6ffd6, border: 0.012 };       // oppervlak uit AprilTags
+
 export class TableCalibrator {
   constructor(renderer, scene, { onStatus = () => {}, onCalibrated = () => {} } = {}) {
     this.renderer = renderer;
@@ -219,6 +222,29 @@ export class TableCalibrator {
     this.onStatus(`Table calibrated: ${(width * 100).toFixed(1)} × ${(depth * 100).toFixed(1)} cm.`);
   }
 
+  /**
+   * Zet het tafelframe vanuit een AprilTag-oppervlak (src/tag-surface.js estimateSurface()) in plaats van de 3-punts kalibratie.
+   * surface: { width, depth, frame: { matrix: kolom-groot 4x4 (x = rechts, y = omhoog, z = naar gebruiker; oppervlak beslaat x∈[0,width], z∈[0,depth]) } }.
+   * Zelfde frameconventie, opslag, anchor en onCalibrated() als finish(), zodat de sandwich-scène (placeOnTable) ongewijzigd blijft werken.
+   */
+  async setFromSurface(frame, surface, { source = 'apriltag' } = {}) {
+    const width = surface.width, depth = surface.depth;
+    this.collecting = false; this.points = []; this.clearMarkers();
+    try { this.anchor?.delete?.(); } catch {}                       // update() zou root.matrix anders elk frame terugzetten naar de oude anchor
+    this.anchor = null; this.anchorHandle = null; localStorage.removeItem('piper-table-anchor-handle');
+    const matrix = new THREE.Matrix4().fromArray(surface.frame.matrix);
+    this.root.matrix.copy(matrix);
+    this.root.matrixWorldNeedsUpdate = true;
+    this.root.visible = true;
+    this.buildTableVisualization(width, depth, source === 'apriltag' ? TAG_STYLE : undefined);
+    localStorage.setItem('piper-table-calibration', JSON.stringify({
+      matrix: matrix.toArray(), width, depth, source, savedAt: new Date().toISOString()
+    }));
+    await this.createAnchor(frame, matrix);
+    this.onCalibrated({ matrix: matrix.clone(), width, depth, root: this.root, source });
+    this.onStatus(`Table surface from ${source}: ${(width * 100).toFixed(1)} × ${(depth * 100).toFixed(1)} cm.`);
+  }
+
   async createAnchor(frame, matrix) {
     if (!frame?.createAnchor || !this.referenceSpace || typeof XRRigidTransform === 'undefined') return;
     matrix.decompose(POS, QUAT, SCALE);
@@ -237,15 +263,15 @@ export class TableCalibrator {
     }
   }
 
-  buildTableVisualization(width, depth) {
+  buildTableVisualization(width, depth, style = DEFAULT_STYLE) {
     this.visualRoot.clear();
 
     const surface = new THREE.Mesh(
       new THREE.PlaneGeometry(width, depth),
       new THREE.MeshBasicMaterial({
-        color: 0x33aaff,
+        color: style.fill,
         transparent: true,
-        opacity: 0.10,
+        opacity: style.opacity,
         side: THREE.DoubleSide,
         depthWrite: false,
       })
@@ -261,8 +287,15 @@ export class TableCalibrator {
     ];
     this.visualRoot.add(new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(edgePoints),
-      new THREE.LineBasicMaterial({ color: 0xffffff })
+      new THREE.LineBasicMaterial({ color: style.edge })
     ));
+
+    if (style.border) {                                              // lijnen zijn in WebXR 1 px: echte randstroken (alleen voor het tag-oppervlak)
+      const bm = new THREE.MeshBasicMaterial({ color: style.edge, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }), b = style.border;
+      for (const [w, d, x, z] of [[width, b, width / 2, b / 2], [width, b, width / 2, depth - b / 2], [b, depth, b / 2, depth / 2], [b, depth, width - b / 2, depth / 2]]) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), bm); m.rotation.x = -Math.PI / 2; m.position.set(x, 0.004, z); this.visualRoot.add(m);
+      }
+    }
 
     const axes = new THREE.AxesHelper(Math.min(.25, width * .25, depth * .25));
     axes.position.y = .01;

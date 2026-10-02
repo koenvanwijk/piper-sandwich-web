@@ -12,6 +12,7 @@
 import { createAprilTagDetector, rgbaToGray, DEFAULT_TAG_SIZE_M } from './apriltag-detector.js';
 
 export { DEFAULT_TAG_SIZE_M };
+export const DEFAULT_CAPTURE_LATENCY_MS = 60;   // aanname: beeld is ~60 ms oud bij verwerking als de browser geen captureTime geeft
 export const DEFAULT_HFOV_DEG = 77;       // schatting voor de getUserMedia-stream van Quest 3 (1280×720, fx≈fy≈800); niet exact
 
 /** Kies een passthrough-camera uit enumerateDevices(): 'left' | 'right' | 'front' | 'auto' | index | label-deel | deviceId. */
@@ -52,10 +53,10 @@ export class AprilTagCamera {
    */
   constructor(video, canvas, opts = {}) {
     const { onStatus = () => {}, onDetections = () => {}, onFrame = () => {}, camera = 'auto', deviceId = null, procWidth = 960,
-            tagSize = DEFAULT_TAG_SIZE_M, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true } = opts;
-    Object.assign(this, { video, canvas, onStatus, onDetections, onFrame, want: camera, deviceId, procWidth, tagSize, hfov, maxFps, draw, showVideo });
+            tagSize = DEFAULT_TAG_SIZE_M, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true, latencyMs = DEFAULT_CAPTURE_LATENCY_MS } = opts;
+    Object.assign(this, { video, canvas, onStatus, onDetections, onFrame, want: camera, deviceId, procWidth, tagSize, hfov, maxFps, draw, showVideo, latencyMs });
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
-    this.stream = null; this.detector = null; this.running = false; this.device = null; this.devices = [];
+    this.stream = null; this.detector = null; this.running = false; this.device = null; this.lastCapture = null; this.devices = [];
     this.fps = { frames: 0, t0: 0, value: 0, detMs: 0 };
     this.intrinsicsInfo = null; this.lastError = null; this._gray = null; this._lastT = 0; this._gen = 0;
   }
@@ -156,13 +157,27 @@ export class AprilTagCamera {
     try {
       const v = this.video;
       if (v.videoWidth && now - this._lastT >= 1000 / this.maxFps - 2) {
-        this._lastT = now; this.processFrame();
+        this._lastT = now; this.processFrame(now, meta);
       }
     } catch (e) { this.lastError = e.message || String(e); this.onStatus('Detectiefout: ' + this.lastError); }
     next?.();
   }
 
-  processFrame() {
+  /** Voor een XR-animatielus als requestVideoFrameCallback ontbreekt/niet tikt (rAF van het venster loopt niet in een immersive sessie). */
+  get usesRvfc() { return typeof this.video.requestVideoFrameCallback === 'function'; }
+  pump(now) { if (this.running && !this.usesRvfc) this.step(now, null, null); }
+
+  /**
+   * Tijdstip (ms, performance.now()-basis = zelfde basis als de XR-frame-timestamp) waarop het beeld is opgenomen:
+   * rVFC `captureTime` (of `expectedDisplayTime`-niet gebruiken) indien aanwezig; anders `now − latencyMs` (schatting, ?camlat=).
+   */
+  captureTimeOf(now, meta) {
+    if (meta && Number.isFinite(meta.captureTime)) return { t: meta.captureTime, source: 'rVFC captureTime' };
+    if (meta && Number.isFinite(meta.receiveTime)) return { t: meta.receiveTime - this.latencyMs, source: `rVFC receiveTime − ${this.latencyMs} ms` };
+    return { t: (now ?? performance.now()) - this.latencyMs, source: `nu − ${this.latencyMs} ms (schatting)` };
+  }
+
+  processFrame(now, vmeta) {
     const v = this.video, w = Math.min(this.procWidth, v.videoWidth), h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
     if (!this._gray || this._gray.length !== w * h) this._gray = new Uint8Array(w * h);
@@ -178,7 +193,8 @@ export class AprilTagCamera {
     const el = performance.now() - f.t0; if (el >= 1000) { f.value = f.frames * 1000 / el; f.frames = 0; f.t0 = performance.now(); }
     if (this.draw) drawDetections(this.ctx, dets);
     this.onFrame({ fps: f.value, detMs: f.detMs, w, h, intrinsics: K, device: this.device?.label || '' });
-    this.onDetections(dets, { w, h, intrinsics: K });
+    const ct = this.captureTimeOf(now, vmeta); this.lastCapture = ct;
+    this.onDetections(dets, { w, h, intrinsics: K, t: ct.t, tSource: ct.source, device: this.device?.label || '', procNow: performance.now() });
     return dets;
   }
 }

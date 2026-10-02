@@ -26,12 +26,18 @@
       <button id="clear" disabled>Clear</button>
       <button id="camera">Test headset camera</button>
       <button id="tags" disabled>Start AprilTag detector</button>
+      <button id="scan" disabled>Scan tags → table surface</button>
     </div>
     <p class="hint">
       Enter AR. Calibration starts automatically: trigger A = origin, B = +X table edge,
       C = second table edge. The blue rectangle is the calibrated physical tabletop.
       The shared MuJoCo layout is then shown 1:1 on the real table: both Pipers,
       both bread slices, all butter pats, board, knife, jar and plate.
+    </p>
+    <p class="hint">
+      AprilTag table surface (opt-in: <code>?tags=1</code> or the "Scan tags → table surface" button): lay one AprilTag flat at the
+      bottom-left and one at the top-right of the work area (82.55 mm tags); the rectangle between them becomes the table surface (green).
+      Falls back to the 3-point calibration after ~25 s. Add <code>?debug=1</code> for tag positions/corners/size.
     </p>
     <p class="hint"><a href="./tags.html">AprilTag test page</a> · <a href="../">Back to Piper Sandwich VR</a></p>
   </div>
