@@ -221,6 +221,40 @@ Detects **tag36h11** AprilTags in the headset's passthrough-camera stream, fully
 - **Tests:** `node tools/test-apriltag.mjs` (WASM in Node, synthetic tag36h11 images with known pose); optional headless Chrome with a fake camera:
   `tools/make-tag-video.mjs` + `tools/test-apriltag-chrome.mjs`.
 
+## AprilTag table surface in AR (opt-in, `table-ar/index.html?tags=1`)
+
+Lay AprilTags **flat on the table** (tag36h11, **82.55 mm**, default `DEFAULT_TAG_SIZE_M`). The **bottom-left** tag and the **top-right** tag (seen from where you
+stand while scanning) span a rectangle = the **work surface**. It is drawn in AR as a semi-transparent green plane with a bright border (everything else stays
+passthrough) and becomes the calibrated table of the sandwich scene (`TableCalibrator.setFromSurface` → `onCalibrated` → `ARSandwichScene.placeOnTable(width, depth)`, same path as the manual calibration).
+
+- **Opt-in, nothing changes by default.** `?tags=1` → on AR start (and no restored anchor) the tag scan runs first; otherwise use the **"Scan tags → table surface"** button
+  (also usable later to re-measure). Without `?tags=1` and without pressing the button the app behaves exactly as before.
+- **Flow:** (1) *Scan step*: the headset camera runs the detector; each detection is converted to a **world position** with the viewer pose of that moment.
+  (2) *Averaging*: per tag a window of ≤ 60 samples / 8 s; outliers > 4 cm from the median are rejected; median per axis. (3) *Rectangle*: ≥ 2 tags; the tag with the lowest
+  `left+near` score is "bottom-left", the highest is "top-right" (works with more than 2 tags; tags in between are ignored). Axes follow the tags' own orientation if they agree (≤ ~8°, modulo 90°),
+  else the existing calibrated frame, else your gaze direction; snapped to the axis closest to your right-hand side. `?tagedge=center|outer|inner` = rectangle through the tag centres (default) / including / excluding the tags.
+  (4) *Stable* when both corner tags have ≥ 8 samples, σ ≤ 12 mm and the rectangle stays within 1 cm for 1 s → applied (anchor + persisted like the 3-point calibration).
+  (5) *Fallback*: no stable result within **25 s**, <2 tags, tags on one line / < 15 cm, no camera permission, or the camera fails → status message and the **manual 3-point calibration starts**. The 3-point flow stays available (Recalibrate).
+- **Table height / orientation:** from the existing calibration if present, else from XR plane-detection planes labelled `table`, else from the tags themselves (median tag height).
+  Orientation comes from the tags (flat tags only; tilt > 20° is rejected).
+- **Tag → world:** `ray` method (preferred when the table height is known): the pixel ray through the tag centre ∩ the horizontal table plane, so tag size and depth estimate do not matter.
+  Otherwise `pose`: the detector's `t` in the camera frame. Chain: camera frame (OpenCV) → viewer frame via **assumed camera extrinsics** → `XRViewerPose` → XR reference space.
+  **Focal self-calibration:** with a known tag size and table height, the apparent tag size yields the true focal length (`estimateFocalScale`, median over samples), so a wrong `hfov` guess is corrected (synthetic test: 12 % too large f → 6 cm error without, 2–3 mm with).
+- **Assumptions (all unverified on a real Quest, see `src/tag-surface.js` header):**
+  1. *Camera position vs. headset* is a guess (`camera 2 1` = left ≈ (−5, +2, −5) cm in the viewer frame, right mirrored, no extra rotation). Override: `?camoff=x,y,z` (cm) and `?campitch=deg`. A 3 cm error ⇒ ~3 cm error in the tag positions.
+  2. *Time synchronisation:* the camera image has no link to the XR pose. The viewer pose of every XR frame is kept (`PoseHistory`); a detection is evaluated at the pose interpolated at the
+     **capture time** (`requestVideoFrameCallback` `captureTime`, else `receiveTime − latency`, else `now − 60 ms`, `?camlat=ms`). Frames are dropped when the head moves faster than 0.5 m/s or 60°/s,
+     or when the pose history is > 150 ms away. Head speed 0.3 m/s × 60 ms error ⇒ ~2 cm (tested) — look at the tags calmly, ideally head still. Pose timestamps use the XR animation-frame time, the *predicted display time* pose is assumed to be that moment ± 1 frame.
+  3. *Intrinsics:* from track metadata if the browser gives them, else an `hfov` estimate (self-corrected, see above).
+  4. *requestVideoFrameCallback / getUserMedia during an immersive-ar session on Quest Browser is unproven*; when rVFC is missing the XR loop pumps the detector (`AprilTagCamera.pump`).
+- **`?debug=1`:** overlay (DOM `<pre>` + a head-locked 3D panel, since DOM overlay may not show in AR) with phase, per tag id: world position (cm), samples `n`, σ, yaw, role (BOTTOM-LEFT / TOP-RIGHT),
+  surface width × depth, the four corners, table height, intrinsics source + focal scale, time source, camera-extrinsics assumption and drop counters (motion / gap / tilt / no pose).
+- **Tests (headless, no Quest):** `node tools/test-tag-surface.mjs` (geometry: rectangle from two tags, mirroring/rotation of the viewer, noise + outliers, pose-history interpolation, time-sync error, degenerate input,
+  scanner state machine, end-to-end with the WASM detector on rendered synthetic images with simulated head poses) and optional `tools/test-tag-surface-chrome.mjs` (headless Chrome: page loads with/without params,
+  scanner → `setFromSurface` → `placeOnTable`, fallback). Regression: `tools/run-sandwich-demo.mjs`, `tools/test-apriltag.mjs`, `tools/test-rec-controls.mjs`, `tools/test-teleop-mapping.mjs`.
+- **Quest test checklist:** `https://<host>/table-ar/index.html?tags=1&debug=1`; allow *Headset cameras*; lay two tags flat at opposite corners of the area; look at them calmly for a few seconds; compare the green plane with the tags/table edge and with a manual 3-point calibration (Recalibrate).
+  Tune with `?camoff=`, `?campitch=`, `?camlat=`, `?camera=left|right`.
+
 ## How it works
 
 ```
@@ -264,10 +298,11 @@ src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
 src/qmath.js          quaternion helpers
 src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless)
+src/tag-surface.js    AprilTag → table surface geometry (pose history, tracker, rectangle, scanner), src/tag-surface-view.js preview, src/tag-debug.js ?debug=1 overlay
 src/recorder-client.js WebSocket-opname-client (?rec=), src/rec-state.js toestand/seq, src/rec-capture.js JPEG-camera's
 src/demo-ui.js        demo-paneel (stappenlijst, plaatje, Pauze/Opnieuw), alleen bij ?demo=1
 demo/step-*.svg       stap-illustraties (tools/make-step-images.py)
-tools/                headless MuJoCo-test van de demo, test-apriltag.mjs (AprilTag-detector), test-teleop-mapping.mjs (controller→TCP-richtingen), rec-echo-server.mjs (testserver opname)
+tools/                headless MuJoCo-test van de demo, test-apriltag.mjs (AprilTag-detector), test-tag-surface.mjs (AprilTag table surface), test-teleop-mapping.mjs (controller→TCP-richtingen), rec-echo-server.mjs (testserver opname)
 src/scene-loader.js   MuJoCo model → three.js meshes (adapted from zalo/mujoco_wasm)
 assets/scene.xml      the sandwich scene (shared with the Python sim)
 assets/meshes/*.STL   Piper link meshes

@@ -3,6 +3,9 @@ import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { TableCalibrator } from '../src/table-calibration.js';
 import { AprilTagCamera, DEFAULT_TAG_SIZE_M } from '../src/apriltag-camera.js';
 import { ARSandwichScene } from '../src/ar-sandwich-scene.js';
+import { PoseHistory, TagTableScanner, cameraExtrinsics, sideFromLabel, median } from '../src/tag-surface.js';
+import { TagSurfaceView } from '../src/tag-surface-view.js';
+import { createTagDebugPanel } from '../src/tag-debug.js';
 
 const statusEl = document.querySelector('#status');
 const detailsEl = document.querySelector('#details');
@@ -10,6 +13,7 @@ const recalibrateButton = document.querySelector('#recalibrate');
 const clearButton = document.querySelector('#clear');
 const cameraButton = document.querySelector('#camera');
 const tagsButton = document.querySelector('#tags');
+const scanButton = document.querySelector('#scan');
 const video = document.querySelector('#camera-video');
 const tagCanvas = document.querySelector('#tag-canvas');
 
@@ -44,10 +48,11 @@ for (let i = 0; i < 2; i++) {
 let sandwichScene;
 const calibrator = new TableCalibrator(renderer, scene, {
   onStatus: setStatus,
-  onCalibrated: ({ width, depth }) => {
+  onCalibrated: ({ width, depth, source }) => {
     sandwichScene?.placeOnTable(width, depth);
+    const frameInfo = source === 'apriltag' ? 'frame: far-left corner origin · +X=right · +Z=towards you · +Y=up (from AprilTags)' : 'frame: A origin · +X=A→B · +Z=A→C · +Y=up';
     detailsEl.textContent =
-      `table.width=${width.toFixed(3)} m\ntable.depth=${depth.toFixed(3)} m\nframe: A origin · +X=A→B · +Z=A→C · +Y=up\nscene: 2× Piper + 2× bread + 14× butter + board/knife/jar/plate`;
+      `table.width=${width.toFixed(3)} m\ntable.depth=${depth.toFixed(3)} m\n${frameInfo}\nscene: 2× Piper + 2× bread + 14× butter + board/knife/jar/plate`;
   },
 });
 
@@ -63,16 +68,86 @@ sandwichScene.init().then(() => {
 // Tag-hook: alleen info (ID's); de handmatige 3-punts kalibratie blijft ongewijzigd en gezaghebbend.
 // ?tagsize=<meter> overschrijft de standaard 0.08255 m (82,55 mm); ?tagsize=0 zet de pose-schatting uit, ?camera=left|right kiest de passthrough-camera (zie table-ar/tags.html).
 const tagParams = new URLSearchParams(location.search);
+const tagsAuto = tagParams.get('tags') === '1';          // opt-in: bij sessiestart eerst het tafeloppervlak uit AprilTags schatten (terugval: 3-punts kalibratie)
+const debugOn = tagParams.get('debug') === '1';
+const numParam = (k, d) => { const v = parseFloat(tagParams.get(k)); return Number.isFinite(v) ? v : d; };
+const listParam = k => { const v = (tagParams.get(k) || '').split(',').map(parseFloat); return v.length === 3 && v.every(Number.isFinite) ? v.map(x => x / 100) : null; };   // ?camoff=x,y,z in cm
+const tagSizeM = tagParams.has('tagsize') && Number.isFinite(parseFloat(tagParams.get('tagsize'))) ? parseFloat(tagParams.get('tagsize')) : DEFAULT_TAG_SIZE_M;
+let lastTagMeta = null;
+const poseHistory = new PoseHistory();
+const tagView = new TagSurfaceView(scene, tagSizeM || DEFAULT_TAG_SIZE_M);
+let tagDebug = null;
+if (debugOn) { scene.add(camera); tagDebug = createTagDebugPanel({ THREE, camera }); }   // hoofd-vaste meshes vragen dat de camera in de scene zit
+let planeY = null;                                       // hoogte van door de bril gedetecteerde 'table'-vlakken (XR plane-detection), indien aanwezig
+let pendingSurface = null;                               // door de scanner goedgekeurd, wordt in de XR-lus (met XRFrame) toegepast
+let lastTick = 0;
+
+const extrinsicsFor = label => cameraExtrinsics({
+  side: ['left', 'right'].includes(tagParams.get('camera')) ? tagParams.get('camera') : sideFromLabel(label),
+  offset: listParam('camoff'), pitchDeg: numParam('campitch', 0),
+});
+
+const scanner = new TagTableScanner({
+  history: poseHistory, extrinsicsFor, tagSize: tagSizeM || DEFAULT_TAG_SIZE_M, edge: tagParams.get('tagedge') || 'center',
+  latencyMs: numParam('camlat', 60),
+  getTableY: () => {
+    if (calibrator.root.visible && (calibrator.anchor || calibrator.getSavedCalibration())) return calibrator.root.matrix.elements[13];   // bestaande kalibratie
+    return planeY;                                                                                                                      // anders plane-detection of null → pose-methode
+  },
+  getFrame: () => {
+    if (!calibrator.root.visible) return null;
+    const e = calibrator.root.matrix.elements; return { x: [e[0], e[1], e[2]], z: [e[8], e[9], e[10]] };
+  },
+  onUpdate: snap => {
+    tagView.update(snap);
+    if (snap.phase === 'scanning') setStatus(`Scanning AprilTags… ${snap.tags.length} tag(s)` + (snap.est?.ok ? ` · ${(snap.est.width * 100).toFixed(1)} × ${(snap.est.depth * 100).toFixed(1)} cm` : '') + ` · ${snap.reason}`);
+  },
+  onStable: surface => { pendingSurface = surface; },
+  onFallback: reason => { stopTagDetection(); tagView.hide(); setStatus(reason); calibrator.start(); },
+});
+
 const tagCamera = new AprilTagCamera(video, tagCanvas, {
   onStatus: setStatus,
   camera: tagParams.get('camera') || 'auto',
-  tagSize: tagParams.has('tagsize') && Number.isFinite(parseFloat(tagParams.get('tagsize'))) ? parseFloat(tagParams.get('tagsize')) : DEFAULT_TAG_SIZE_M,
-  onDetections: detections => {
+  tagSize: tagSizeM,
+  latencyMs: numParam('camlat', 60),
+  onDetections: (detections, meta) => {
+    lastTagMeta = meta;
+    if (scanner.active) scanner.feed(detections, meta);
     if (!detections.length) return;
     detailsEl.textContent =
       `${detailsEl.textContent.split('\nAprilTags:')[0]}\nAprilTags: ${detections.map(d => d.id).join(', ')}`;
   },
 });
+
+function debugInfo() {
+  const ext = extrinsicsFor(lastTagMeta?.device || '');
+  return { intrinsics: lastTagMeta?.intrinsics, tSource: lastTagMeta?.tSource, device: lastTagMeta?.device, extrinsics: ext, pitchDeg: numParam('campitch', 0),
+           tagSize: tagSizeM, source: calibrator.getSavedCalibration()?.source || 'apriltag' };
+}
+function stopTagDetection() { tagCamera.stopDetection(); }
+
+/** Start de scanstap: camera + detector aan, tags middelen, bij stabiel resultaat het oppervlak toepassen; time-out/fout → handmatige 3-punts kalibratie. */
+async function startTagScan() {
+  if (!renderer.xr.getSession()) return setStatus('Start eerst AR (Enter AR), daarna de tag-scan.');
+  try {
+    calibrator.collecting = false; calibrator.clearMarkers();
+    poseHistory.clear(); pendingSurface = null;
+    scanner.start();
+    if (!tagCamera.stream) await tagCamera.openCamera();
+    if (!tagCamera.running) await tagCamera.startDetection();
+    setStatus('Scanning AprilTags: leg een tag linksonder en een tag rechtsboven op de tafel (plat) en kijk er rustig naar.');
+  } catch (error) {
+    console.error(error);
+    scanner.stop(); tagView.hide();
+    setStatus(`AprilTag-scan niet mogelijk (${error.name || 'Error'}: ${error.message}). Terugval: handmatige 3-punts kalibratie.`);
+    calibrator.start();
+  }
+}
+
+// Alleen met ?tags=1 of ?debug=1: debug/test-haak (geen effect op gedrag).
+if (tagsAuto || debugOn) window.tableAR = { THREE, scene, camera, calibrator, scanner, poseHistory, tagCamera, tagView, params: tagParams, startTagScan, debugInfo,
+  get sandwichScene() { return sandwichScene; }, applyPending: () => pendingSurface, setPendingSurface: surface => { pendingSurface = surface; } };
 
 const button = ARButton.createButton(renderer, {
   requiredFeatures: ['local-floor'],
@@ -89,8 +164,11 @@ renderer.xr.addEventListener('sessionstart', async () => {
   clearButton.disabled = false;
   // A successfully restored persistent anchor is already aligned; otherwise
   // collect A/B/C immediately.
-  if (!calibrator.anchor) calibrator.start();
+  scanButton.disabled = false;
+  if (tagsAuto && !calibrator.anchor) startTagScan();             // ?tags=1 → eerst AprilTags (valt bij time-out/fout terug op de 3 punten)
+  else if (!calibrator.anchor) calibrator.start();
   session.addEventListener('end', () => {
+    scanner.stop(); stopTagDetection(); tagView.hide(); scanButton.disabled = true; planeY = null;
     calibrator.detachSession();
     recalibrateButton.disabled = true;
     clearButton.disabled = true;
@@ -98,7 +176,8 @@ renderer.xr.addEventListener('sessionstart', async () => {
   }, { once: true });
 });
 
-recalibrateButton.addEventListener('click', () => calibrator.start());
+recalibrateButton.addEventListener('click', () => { if (scanner.active) { scanner.stop(); stopTagDetection(); tagView.hide(); } calibrator.start(); });
+scanButton.addEventListener('click', () => startTagScan());
 clearButton.addEventListener('click', () => calibrator.clear());
 
 cameraButton.addEventListener('click', async () => {
@@ -117,10 +196,31 @@ tagsButton.addEventListener('click', async () => {
   catch (error) { console.error(error); setStatus(error.message); }
 });
 
-renderer.setAnimationLoop((_, frame) => {
+renderer.setAnimationLoop((time, frame) => {
   calibrator.update(frame);
+  if (frame && (scanner.active || pendingSurface)) trackViewer(time, frame);
+  if (tagDebug) tagDebug.update(scanner.snapshot(), debugInfo(), time);
   renderer.render(scene, camera);
 });
+
+/** Per XR-frame: viewer-pose in de historie (tijdsynchronisatie met het camerabeeld, zie src/tag-surface.js), tafelvlak-hoogte, scanner-tick, toepassen. */
+function trackViewer(time, frame) {
+  const ref = renderer.xr.getReferenceSpace(), vp = ref && frame.getViewerPose(ref);
+  if (vp) { const p = vp.transform.position, o = vp.transform.orientation; poseHistory.push(time, [p.x, p.y, p.z], [o.x, o.y, o.z, o.w]); }
+  tagCamera.pump(time);                                           // alleen actief zonder requestVideoFrameCallback
+  if (frame.detectedPlanes && ref) {
+    const ys = [];
+    for (const pl of frame.detectedPlanes) if (pl.semanticLabel === 'table' && pl.orientation !== 'vertical') { const pp = frame.getPose(pl.planeSpace, ref); if (pp) ys.push(pp.transform.position.y); }
+    planeY = ys.length ? median(ys) : null;
+  }
+  const now = performance.now();
+  if (scanner.active && now - lastTick > 200) { lastTick = now; scanner.tick(); }
+  if (pendingSurface) {
+    const surface = pendingSurface; pendingSurface = null;
+    scanner.markApplied(); stopTagDetection(); tagView.hide();
+    calibrator.setFromSurface(frame, surface, { source: 'apriltag' }).catch(e => { console.error(e); setStatus('Oppervlak toepassen mislukt: ' + e.message); calibrator.start(); });
+  }
+}
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
