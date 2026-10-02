@@ -37,5 +37,6 @@ async function measure(query, pixelScale) {
 const SHOTS = process.env.SHOTS;
 const rows = [['oud (?perf=0), 100 % pixels', '&perf=0', 1], ['alleen tendon-fix (?mat=physical&freeze=0&lod=0&fbscale=1)', '&perf=1&mat=physical&freeze=0&lod=0&fbscale=1', 1], ['+ materialen/opruiming, zonder decimatie (?lod=0&fbscale=1)', '&perf=1&lod=0&fbscale=1', 1], ['standaard (lod 12000, fbscale 0.8 → 64 % pixels)', '&perf=1', 0.8], ['standaard + ?aa=0', '&perf=1&aa=0', 0.8]];
 const out = [];
-for (const [name, q, ps] of rows) { console.error('meting:', name, new Date().toISOString()); const r = await measure(q, ps); out.push({ name, ...r }); }
+const ONLY = process.env.ROWS?.split(',').map(Number);
+for (const [name, q, ps] of rows.filter((_, i) => !ONLY || ONLY.includes(i))) { console.error('meting:', name, new Date().toISOString()); const r = await measure(q, ps); out.push({ name, ...r }); }
 console.log(JSON.stringify(out.map(o => ({ variant: o.name, px: o.px, drawCalls: o.calls, triangles: o.triangles, geometries: o.geometries, programs: o.programs, 'cpu ms/frame': +o.cpuMs.toFixed(1), 'cpu+gpu(swiftshader) ms/frame': +o.totalMs.toFixed(1), opt: o.perf, errs: o.errs })), null, 1));
