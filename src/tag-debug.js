@@ -41,12 +41,12 @@ export function createTagDebugPanel({ THREE, camera }) {
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }));
   mesh.position.set(0, -0.14, -0.9); mesh.renderOrder = 997; mesh.frustumCulled = false; mesh.name = 'tag-debug-overlay';
   camera.add(mesh);
-  let last = 0;
+  let last = 0, lastText = '';
   return {
     el, mesh,
     update(snap, info, nowMs = performance.now()) {
       if (nowMs - last < 200) return; last = nowMs;
-      const L = formatTagDebug(snap, info); el.textContent = L.join('\n');
+      const L = formatTagDebug(snap, info), text = L.join('\n'); if (text === lastText) return; lastText = text; el.textContent = text;   // niets herschrijven als er niets veranderd is (DOM-overlay + texture-upload)
       g.clearRect(0, 0, W, H); g.fillStyle = 'rgba(0,0,0,.72)'; g.fillRect(0, 0, W, H);
       g.fillStyle = '#ffd479'; g.font = '19px monospace'; g.textBaseline = 'top';
       L.slice(0, 24).forEach((line, i) => g.fillText(line.slice(0, 96), 8, 6 + i * 26));

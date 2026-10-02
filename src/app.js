@@ -4,7 +4,7 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 import load_mujoco from '../vendor/mujoco/mujoco.js';
 import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from './scene-loader.js';
 import { ArmIK } from './ik.js';
-import { HandTeleop } from './teleop.js';
+import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery } from './teleop.js';
 import { mat2quat } from './qmath.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
@@ -22,6 +22,10 @@ const RECCFG = parseRecConfig();
 // vanaf de clutch) stuurt ook de TCP-oriëntatie aan; standaard blijft de pols-oriëntatie vergrendeld (zoals voorheen).
 const _Q = new URLSearchParams(location.search);
 const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _Q.get('headhome') === '1';
+// Oriëntatiemodus van de controller (zie src/teleop.js): standaard 'roll' = controller-rol om zijn eigen as -> gripper-rol (joint6);
+// ?rot=1 = volledige relatieve oriëntatie; ?rot=0 of ?roll=0 = oud gedrag (pols vergrendeld); ?rollaxis=x,y,z = andere controller-as (standaard 0,0,-1).
+const ORI_MODE = orientationMode(location.search), ROLL_AXIS_Q = rollAxisFromQuery(location.search);
+const newTeleop = () => new HandTeleop({ mode: ORI_MODE, rollAxis: ROLL_AXIS_Q });
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -113,12 +117,12 @@ class SandwichVR {
     // Dit stond alleen in de demo (initDemo); teleop had het niet. Nu altijd (zie tools/test-teleop-mapping.mjs).
     relaxBaseContacts(this.model);
 
-    this.ik = {}; this.qTarget = {}; this.grip = {}; this.teleop = {};
+    this.ik = {}; this.qTarget = {}; this.qIK = {}; this.grip = {}; this.teleop = {};
     for (const s of SIDES) {
       this.ik[s] = new ArmIK(mujoco, this.model, this.data, s);
       this.qTarget[s] = this.ik[s].currentQ();
       this.grip[s] = 0.0;
-      this.teleop[s] = new HandTeleop({ lockOrientation: !ROT });
+      this.teleop[s] = newTeleop();
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
     this._mocap = {};
@@ -227,7 +231,7 @@ class SandwichVR {
     mj.mj_forward(this.model, this.data);
     for (const s of SIDES) {
       this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0;
-      this.teleop[s] = new HandTeleop({ lockOrientation: !ROT });       // clutch loslaten; volgende grip = nieuw anker
+      this.teleop[s] = newTeleop();       // clutch loslaten; volgende grip = nieuw anker
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
     if (this._buildDemo) { this.demo = this._buildDemo(); if (this._demoUI) this._demoUI.setStep(0); }
@@ -354,7 +358,7 @@ class SandwichVR {
   }
 
   debugInfo() {
-    const out = { xr: this.renderer.xr.isPresenting, rot: ROT, rootRotY: this.mujocoRoot.rotation.y, headYaw: null, refSpace: null, sources: [], ctrl: {} };
+    const out = { xr: this.renderer.xr.isPresenting, rot: ORI_MODE, rootRotY: this.mujocoRoot.rotation.y, headYaw: null, refSpace: null, sources: [], ctrl: {} };
     const session = this.renderer.xr.getSession();
     if (session) {
       out.refSpace = this.renderer.xr.getReferenceSpace() ? 'local-floor (ingesteld in app.js)' : null;
@@ -368,7 +372,7 @@ class SandwichVR {
       const t = (this._dbgT || {})[s], tcp = this.tcpPose(s).pos;
       const tgt = t && t.engaged ? t.pos : null;
       out.ctrl[s] = { world: c.world, mj: [c.pos[0], -c.pos[2], c.pos[1]], grip: c.grip, trigger: c.trigger,
-        engaged: this.teleop[s].engaged, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
+        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
     }
     return out;
   }
@@ -398,10 +402,9 @@ class SandwichVR {
         this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
       }
     } else for (const s of SIDES) {
-      const t = this.teleop[s].step(cmds[s], this.tcpPose(s));
+      const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s));   // incl. controller-rol -> joint6 (src/teleop.js)
       if (DEBUG) (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
-        this.qTarget[s] = this.ik[s].solve(this.qTarget[s], t.pos, t.quat, 3);
         this.grip[s] = t.grip;
         if (this._mocap[s] >= 0) {
           const a = this._mocap[s] * 3;

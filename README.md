@@ -193,11 +193,31 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
   ≤ 1 mm error; also reproduces the old bug and checks the scene-rotated case).
 - **Orientation (`?rot=1`):** the TCP orientation follows the controller's rotation *relative to the moment the clutch (grip) was pressed*
   (`HandTeleop`, `lockOrientation: false`). Simulated: a 30° yaw / 25° pitch / 25° roll of the controller rotates the TCP axes to within ~1° of the same
-  world rotation (limited by joint ranges). Default stays locked.
+  world rotation (limited by joint ranges).
+- **Wrist roll (default; `?rot=0` / `?roll=0` = old fully-locked wrist):** *Cause of "I roll the controller but the gripper does not roll":* the TCP orientation was **locked** by default (only `?rot=1`
+  followed the controller, and then the damped-least-squares IK spreads a roll over `joint4` *and* `joint6`, which share an axis when `joint5 ≈ 0`, and fights the other rotations). Now the **twist of the controller about its own
+  pointing axis** (grip-space −z; `?rollaxis=x,y,z` to change) relative to the clutch moment drives **only `joint6`** (the last joint, its axis passes through the TCP, so position and the rest of the orientation stay locked):
+  rolling the controller +40° rolls the gripper +38° (dead zone 1.7°), −40° → −38°, yaw/pitch of the controller do not roll it.
+  Safety: rate-limited (≤ 0.12 rad per tick, no jumps), clamped to the joint range (±120°, small margin, no wind-up beyond the limit), the roll is kept when the grip is released and a new grip starts from the current wrist angle.
+  Left/right independent. `?rot=1` = full 6-DOF orientation as before. Code: `src/teleop.js` (`twistAbout`, `HandTeleop` mode `roll`, `teleopArm`), `ArmIK.withRoll/rollLimits`. Tests: `tools/test-teleop-mapping.mjs`.
+  *Not tested on a real Quest:* whether grip −z is the axis you instinctively roll about (the handle is tilted vs. the pointing ray) – use `?rollaxis=` and `?debug=1` (shows `rol→j6`) to tune.
 - **`?debug=1`:** overlay (DOM + head-locked panel in VR) per controller: handedness, profile, world pose, scene-local pose (MuJoCo), clutch,
   target TCP, actual TCP and Δ. Move a controller 20 cm to the right: `Δ`/`doel` y must go to −0.2 (MuJoCo) and the arm must follow.
 - **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
   instead of the fixed −z of the reference space.
+
+## AR performance (`table-ar/`, "AR is too slow")
+
+Findings (headless analysis, **not measured on a Quest**): the AR page does **not** run MuJoCo physics (the cell is static, `syncBodies()` runs once), so the cost is rendering + main-thread work:
+~360 k triangles from the Piper STLs (two arms), one `MeshPhysicalMaterial` per geom (expensive fragment shader), full-resolution XR framebuffer (scale 1.0), a floor `Reflector` in the loaded model (hidden),
+and — when AprilTag detection runs — a **~40 ms/frame WASM detection on the render thread** (30 fps ⇒ the thread is saturated) plus a visible `<video>`/`<canvas>` and per-frame `textContent` updates inside the DOM overlay (re-rasterised every change).
+
+Defaults now (all in `src/ar-perf.js`; `?perf=0` restores the old behaviour entirely):
+- `?fbscale=0.8` XR framebuffer scale (64 % of the pixels; `?fbscale=1` = old). Foveation is three's maximum (1) – made explicit, `?foveation=`.
+- Hidden objects (floor/table/targets/Reflector) removed from the scene graph; `MeshPhysicalMaterial` → `MeshStandardMaterial`, **shared per colour** (`?mat=physical` = old); shadow flags off; matrices of the static scene frozen (`?freeze=0` = old). MSAA stays on (`?aa=0` switches it off, page-load only).
+- Tag detection: max 10 fps, **duty cycle 25 %** (`dutyCycle`: waits ≥ 4 × the measured detection time), 960 px (`?tagfps=`, `?tagproc=`, `?tagduty=`); camera **stream is stopped after the scan/fallback**; preview video/canvas hidden in AR (`?tagpreview=1`);
+  `#details`/status/debug-panel DOM only written when changed and ≤ 2 Hz.
+- Measure: `tools/measure-ar-perf.mjs` (headless Chrome, software GL: only relative numbers such as draw calls/programs/CPU time are meaningful), `node tools/test-ar-perf.mjs`.
 
 ## AprilTag detection (Quest camera, `table-ar/tags.html`)
 

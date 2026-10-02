@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import load_mujoco from '../vendor/mujoco/mujoco.js';
-import { loadSceneFromURL, getPosition, getQuaternion } from './scene-loader.js';
+import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from './scene-loader.js';
 
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
   'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
 export class ARSandwichScene {
-  constructor(scene, tableContentRoot, { onStatus = () => {} } = {}) {
+  constructor(scene, tableContentRoot, { onStatus = () => {}, fixTendons = true } = {}) {
+    this.fixTendons = fixTendons;                 // false (?perf=0) = oud gedrag, voor vergelijking
     this.scene = scene;
     this.tableContentRoot = tableContentRoot;
     this.onStatus = onStatus;
@@ -51,6 +52,10 @@ export class ARSandwichScene {
     }
     this.mujoco.mj_forward(this.model, this.data);
     this.syncBodies();
+    // loadSceneFromURL maakt twee InstancedMeshes met 1023 (cilinder- resp. bol-)instanties voor tendons; ze staan op count=1023 met identiteitsmatrices
+    // (= 1023× een cilinder/bol met straal 1 m in de oorsprong, ~315 k driehoeken per oog!) tot drawTendonsAndFlex() ze op de echte aantallen zet.
+    // De VR-app doet dat elk frame; de AR-pagina nooit -> dat was de grootste enkele renderlast. Dit scene-model heeft geen tendons => count 0.
+    if (this.fixTendons) drawTendonsAndFlex(this.mujocoRoot, this.model, this.data);
 
     // Passthrough supplies the real table and room. Keep only the robot/cell items
     // from the shared MuJoCo scene.

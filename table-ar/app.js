@@ -6,6 +6,7 @@ import { ARSandwichScene } from '../src/ar-sandwich-scene.js';
 import { PoseHistory, TagTableScanner, cameraExtrinsics, sideFromLabel, median } from '../src/tag-surface.js';
 import { TagSurfaceView } from '../src/tag-surface-view.js';
 import { createTagDebugPanel } from '../src/tag-debug.js';
+import { parseArPerf, optimizeSandwichForAR } from '../src/ar-perf.js';
 
 const statusEl = document.querySelector('#status');
 const detailsEl = document.querySelector('#details');
@@ -20,12 +21,16 @@ const tagCanvas = document.querySelector('#tag-canvas');
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+// Prestatie-opties (src/ar-perf.js): standaard lagere framebuffer-schaal (0.8), goedkopere materialen, minder DOM-updates, gedoseerde tag-detectie. ?perf=0 = oud gedrag.
+const PERF = parseArPerf(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: PERF.antialias, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x000000, 0);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
+renderer.xr.setFramebufferScaleFactor(PERF.fbScale);   // moet vóór het starten van de sessie
+renderer.xr.setFoveation(PERF.foveation);
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.0));
@@ -56,8 +61,10 @@ const calibrator = new TableCalibrator(renderer, scene, {
   },
 });
 
-sandwichScene = new ARSandwichScene(scene, calibrator.contentRoot, { onStatus: setStatus });
+sandwichScene = new ARSandwichScene(scene, calibrator.contentRoot, { onStatus: setStatus, fixTendons: PERF.enabled });
+let perfStats = null;
 sandwichScene.init().then(() => {
+  if (PERF.enabled && sandwichScene.mujocoRoot) perfStats = optimizeSandwichForAR(sandwichScene.mujocoRoot, THREE, PERF);
   const saved = calibrator.getSavedCalibration();
   if (saved) sandwichScene.placeOnTable(saved.width, saved.depth);
 }).catch(error => {
@@ -100,7 +107,7 @@ const scanner = new TagTableScanner({
   },
   onUpdate: snap => {
     tagView.update(snap);
-    if (snap.phase === 'scanning') setStatus(`Scanning AprilTags… ${snap.tags.length} tag(s)` + (snap.est?.ok ? ` · ${(snap.est.width * 100).toFixed(1)} × ${(snap.est.depth * 100).toFixed(1)} cm` : '') + ` · ${snap.reason}`);
+    if (snap.phase === 'scanning' && performance.now() - lastStatusT >= PERF.hudThrottleMs * 2) { lastStatusT = performance.now(); setStatus(`Scanning AprilTags… ${snap.tags.length} tag(s)` + (snap.est?.ok ? ` · ${(snap.est.width * 100).toFixed(1)} × ${(snap.est.depth * 100).toFixed(1)} cm` : '') + ` · ${snap.reason}`); }
   },
   onStable: surface => { pendingSurface = surface; },
   onFallback: reason => { stopTagDetection(); tagView.hide(); setStatus(reason); calibrator.start(); },
@@ -111,10 +118,12 @@ const tagCamera = new AprilTagCamera(video, tagCanvas, {
   camera: tagParams.get('camera') || 'auto',
   tagSize: tagSizeM,
   latencyMs: numParam('camlat', 60),
+  maxFps: PERF.tagFps, procWidth: PERF.tagProc, dutyCycle: PERF.tagDuty,   // detectie (WASM ~40 ms/frame) mag de render-hoofdthread niet verhongeren
   onDetections: (detections, meta) => {
     lastTagMeta = meta;
     if (scanner.active) scanner.feed(detections, meta);
     if (!detections.length) return;
+    const nowMs = performance.now(); if (nowMs - lastDetailsT < PERF.hudThrottleMs) return; lastDetailsT = nowMs;   // DOM-overlay wordt bij elke wijziging opnieuw gerasterd
     detailsEl.textContent =
       `${detailsEl.textContent.split('\nAprilTags:')[0]}\nAprilTags: ${detections.map(d => d.id).join(', ')}`;
   },
@@ -125,7 +134,12 @@ function debugInfo() {
   return { intrinsics: lastTagMeta?.intrinsics, tSource: lastTagMeta?.tSource, device: lastTagMeta?.device, extrinsics: ext, pitchDeg: numParam('campitch', 0),
            tagSize: tagSizeM, source: calibrator.getSavedCalibration()?.source || 'apriltag' };
 }
-function stopTagDetection() { tagCamera.stopDetection(); }
+let lastDetailsT = 0, lastStatusT = 0;
+// Na de scan: detectie én camerastream stoppen (anders blijft video decoderen) en het preview-beeld weghalen.
+function stopTagDetection() { tagCamera.stopDetection(); if (renderer.xr.isPresenting) { tagCamera.stopCamera(); hideTagPreview(); } }
+// In AR laat een zichtbare <video>/<canvas> in de DOM-overlay elke frame opnieuw rasteren: standaard weg (?tagpreview=1 om te houden).
+function hideTagPreview() { video.style.display = 'none'; tagCanvas.style.display = 'none'; }
+function applyTagPreview() { if (renderer.xr.isPresenting && !PERF.tagPreviewInXR) { tagCamera.draw = false; hideTagPreview(); } else tagCamera.draw = true; }
 
 /** Start de scanstap: camera + detector aan, tags middelen, bij stabiel resultaat het oppervlak toepassen; time-out/fout → handmatige 3-punts kalibratie. */
 async function startTagScan() {
@@ -136,6 +150,7 @@ async function startTagScan() {
     scanner.start();
     if (!tagCamera.stream) await tagCamera.openCamera();
     if (!tagCamera.running) await tagCamera.startDetection();
+    applyTagPreview();
     setStatus('Scanning AprilTags: leg een tag linksonder en een tag rechtsboven op de tafel (plat) en kijk er rustig naar.');
   } catch (error) {
     console.error(error);
@@ -146,7 +161,7 @@ async function startTagScan() {
 }
 
 // Alleen met ?tags=1 of ?debug=1: debug/test-haak (geen effect op gedrag).
-if (tagsAuto || debugOn) window.tableAR = { THREE, scene, camera, calibrator, scanner, poseHistory, tagCamera, tagView, params: tagParams, startTagScan, debugInfo,
+if (tagsAuto || debugOn || tagParams.has('perf')) window.tableAR = { THREE, renderer, PERF, get perfStats() { return perfStats; }, scene, camera, calibrator, scanner, poseHistory, tagCamera, tagView, params: tagParams, startTagScan, debugInfo,
   get sandwichScene() { return sandwichScene; }, applyPending: () => pendingSurface, setPendingSurface: surface => { pendingSurface = surface; } };
 
 const button = ARButton.createButton(renderer, {
@@ -192,7 +207,7 @@ cameraButton.addEventListener('click', async () => {
 });
 
 tagsButton.addEventListener('click', async () => {
-  try { await tagCamera.startDetection(); }
+  try { await tagCamera.startDetection(); applyTagPreview(); }
   catch (error) { console.error(error); setStatus(error.message); }
 });
 
@@ -228,7 +243,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-function setStatus(message) { statusEl.textContent = message; }
+function setStatus(message) { if (statusEl.textContent !== message) statusEl.textContent = message; }
 
 (async () => {
   if (!navigator.xr) return setStatus('WebXR unavailable. Open over HTTPS in Meta Quest Browser.');
