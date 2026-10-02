@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { TableCalibrator } from '../src/table-calibration.js';
-import { AprilTagCamera } from '../src/apriltag-camera.js';
+import { AprilTagCamera, DEFAULT_TAG_SIZE_M } from '../src/apriltag-camera.js';
 import { ARSandwichScene } from '../src/ar-sandwich-scene.js';
 
 const statusEl = document.querySelector('#status');
@@ -61,12 +61,12 @@ sandwichScene.init().then(() => {
 });
 
 // Tag-hook: alleen info (ID's); de handmatige 3-punts kalibratie blijft ongewijzigd en gezaghebbend.
-// ?tagsize=0.10 zet de pose-schatting aan, ?camera=left|right kiest de passthrough-camera (zie table-ar/tags.html).
+// ?tagsize=<meter> overschrijft de standaard 0.08255 m (82,55 mm); ?tagsize=0 zet de pose-schatting uit, ?camera=left|right kiest de passthrough-camera (zie table-ar/tags.html).
 const tagParams = new URLSearchParams(location.search);
 const tagCamera = new AprilTagCamera(video, tagCanvas, {
   onStatus: setStatus,
   camera: tagParams.get('camera') || 'auto',
-  tagSize: parseFloat(tagParams.get('tagsize')) || null,
+  tagSize: tagParams.has('tagsize') && Number.isFinite(parseFloat(tagParams.get('tagsize'))) ? parseFloat(tagParams.get('tagsize')) : DEFAULT_TAG_SIZE_M,
   onDetections: detections => {
     if (!detections.length) return;
     detailsEl.textContent =

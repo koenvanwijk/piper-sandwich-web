@@ -7,10 +7,11 @@
  *
  * Intrinsics: Meta noemt metadata (brandpuntsafstand, hoofdpunt, beeldgrootte), maar de exacte vorm in de browser is niet vastgelegd.
  * Daarom: (1) zoek in track.getSettings()/getCapabilities() naar velden die op focal/principal/intrinsic lijken, (2) anders een
- * ruwe schatting uit `hfov` (standaard 77° volgens een gemeten Quest 3-schatting; NIET gekalibreerd), (3) zonder tagsize geen pose.
+ * ruwe schatting uit `hfov` (standaard 77° volgens een gemeten Quest 3-schatting; NIET gekalibreerd), (3) tagSize 0/null = geen pose. Standaard tagmaat: DEFAULT_TAG_SIZE_M = 0,08255 m (82,55 mm).
  */
-import { createAprilTagDetector, rgbaToGray } from './apriltag-detector.js';
+import { createAprilTagDetector, rgbaToGray, DEFAULT_TAG_SIZE_M } from './apriltag-detector.js';
 
+export { DEFAULT_TAG_SIZE_M };
 export const DEFAULT_HFOV_DEG = 77;       // schatting voor de getUserMedia-stream van Quest 3 (1280×720, fx≈fy≈800); niet exact
 
 /** Kies een passthrough-camera uit enumerateDevices(): 'left' | 'right' | 'front' | 'auto' | index | label-deel | deviceId. */
@@ -47,11 +48,11 @@ export class AprilTagCamera {
    * @param video   <video> (verborgen mag)
    * @param canvas  <canvas>: krijgt het (verkleinde) camerabeeld + overlay van gedetecteerde tags
    * @param opts    onStatus(msg), onDetections(list), onFrame(info) per verwerkt frame, camera:'auto'|'left'|'right'|..., deviceId,
-   *                procWidth (breedte detectiebeeld, standaard 960), tagSize (m, null = geen pose), hfov (graden), maxFps, draw (bool)
+   *                procWidth (breedte detectiebeeld, standaard 960), tagSize (m, standaard 0.08255; 0 of null = geen pose), hfov (graden), maxFps, draw (bool)
    */
   constructor(video, canvas, opts = {}) {
     const { onStatus = () => {}, onDetections = () => {}, onFrame = () => {}, camera = 'auto', deviceId = null, procWidth = 960,
-            tagSize = null, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true } = opts;
+            tagSize = DEFAULT_TAG_SIZE_M, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true } = opts;
     Object.assign(this, { video, canvas, onStatus, onDetections, onFrame, want: camera, deviceId, procWidth, tagSize, hfov, maxFps, draw, showVideo });
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
     this.stream = null; this.detector = null; this.running = false; this.device = null; this.devices = [];
@@ -139,7 +140,7 @@ export class AprilTagCamera {
     this.running = true; const gen = ++this._gen;
     this.canvas.style.display = 'block';
     this.fps = { frames: 0, t0: performance.now(), value: 0, detMs: 0 };
-    this.onStatus(`AprilTag-detectie actief (tag36h11${this.tagSize ? ', tagsize ' + this.tagSize + ' m' : ', zonder pose'}).`);
+    this.onStatus(`AprilTag-detectie actief (tag36h11${this.tagSize ? ', tagsize ' + this.tagSize + ' m (' + (this.tagSize * 1000).toFixed(2) + ' mm)' : ', zonder pose'}).`);
     const next = () => {
       if (!this.running || gen !== this._gen) return;
       if (this.video.requestVideoFrameCallback) this.video.requestVideoFrameCallback((now, meta) => this.step(now, meta, next));

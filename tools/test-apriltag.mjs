@@ -2,18 +2,20 @@
 // Test van de AprilTag-detector (WASM in Node, geen browser): synthetische beelden met bekende tag36h11-ID's en bekende pose.
 //   node tools/test-apriltag.mjs
 import assert from 'node:assert/strict';
-import { createAprilTagDetector, rgbaToGray } from '../src/apriltag-detector.js';
+import { createAprilTagDetector, rgbaToGray, DEFAULT_TAG_SIZE_M } from '../src/apriltag-detector.js';
 import { pickCamera, intrinsicsFromTrack, AprilTagCamera } from '../src/apriltag-camera.js';
 import { renderScene, rotXYZ, FIXTURE_IDS } from './apriltag-synth.mjs';
 
 let n = 0; const ok = async (name, f) => { await f(); n++; console.log('ok', name); };
 const cam = { w: 960, h: 720, fx: 700, fy: 700, cx: 480, cy: 360 };
+const TAG = DEFAULT_TAG_SIZE_M;            // 0,08255 m: onze tags zijn 82,55 mm
+assert.equal(TAG, 0.08255);
 const det = await createAprilTagDetector();
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const I = rotXYZ(0, 0, 0);
 
 await ok('7 tags (ID 0,1,7,42,100,321,586) frontaal: alle ID\'s gevonden, hoeken < 0,5 px', () => {
-  const ids = FIXTURE_IDS, tags = ids.map((id, i) => ({ id, size: 0.08, R: I, t: [-0.21 + (i % 4) * 0.14, -0.1 + Math.floor(i / 4) * 0.2, 0.9] }));
+  const ids = FIXTURE_IDS, tags = ids.map((id, i) => ({ id, size: TAG, R: I, t: [-0.21 + (i % 4) * 0.14, -0.1 + Math.floor(i / 4) * 0.2, 0.9] }));
   const { gray, truth } = renderScene(tags, cam);
   det.setIntrinsics(0, 0, 0, 0);
   const t0 = performance.now(); const r = det.detect(gray, cam.w, cam.h); const ms = performance.now() - t0;
@@ -26,7 +28,7 @@ await ok('7 tags (ID 0,1,7,42,100,321,586) frontaal: alle ID\'s gevonden, hoeken
 });
 
 await ok('hoekvolgorde: 4 hoeken = LO, RO, RB, LB van de tag zoals gelezen; rotatie 90° verschuift de hoeken cyclisch', () => {
-  const t = { id: 42, size: 0.1, R: rotXYZ(0, 0, Math.PI / 2), t: [0, 0, 0.8] };
+  const t = { id: 42, size: TAG, R: rotXYZ(0, 0, Math.PI / 2), t: [0, 0, 0.8] };
   const { gray, truth } = renderScene([t], cam); det.setIntrinsics(0, 0, 0, 0);
   const d = det.detect(gray, cam.w, cam.h)[0]; assert.equal(d.id, 42);
   d.corners.forEach((c, i) => assert.ok(d2(c, truth[0].corners[i]) < 0.6, `hoek ${i}`));
@@ -34,9 +36,9 @@ await ok('hoekvolgorde: 4 hoeken = LO, RO, RB, LB van de tag zoals gelezen; rota
 
 for (const [name, R, tz] of [['kantel 35° om y', rotXYZ(0, 0.61, 0), 0.8], ['kantel 30° om x + 20° roll', rotXYZ(0.52, 0, 0.35), 0.9], ['ver (1,5 m)', rotXYZ(0.2, -0.3, 0.1), 1.5]]) {
   await ok(`pose-schatting (${name}): t en R binnen tolerantie`, () => {
-    const t = { id: 100, size: 0.10, R, t: [0.05, -0.04, tz] };
+    const t = { id: 100, size: TAG, R, t: [0.05, -0.04, tz] };
     const { gray, truth } = renderScene([t], cam, { noise: 3 });
-    det.setTagSize(0.10); det.setIntrinsics(cam.fx, cam.fy, cam.cx, cam.cy);
+    det.setTagSize(TAG); det.setIntrinsics(cam.fx, cam.fy, cam.cx, cam.cy);
     const r = det.detect(gray, cam.w, cam.h); assert.equal(r.length, 1); const p = r[0].pose; assert.ok(p, 'pose aanwezig');
     const te = Math.hypot(p.t[0] - t.t[0], p.t[1] - t.t[1], p.t[2] - t.t[2]);
     const Rt = p.R.map((row, i) => row.map((_, j) => row.reduce((a, _, k) => a + p.R[k][i] * R[k][j], 0)));   // p.R^T · R
@@ -49,7 +51,7 @@ for (const [name, R, tz] of [['kantel 35° om y', rotXYZ(0, 0.61, 0), 0.8], ['ka
 
 await ok('zonder intrinsics: geen pose (alleen hoeken/centrum), geen crash; lege/ruisige beelden → 0 detecties', () => {
   det.setIntrinsics(0, 0, 0, 0);
-  const { gray } = renderScene([{ id: 7, size: 0.1, R: I, t: [0, 0, 0.8] }], cam);
+  const { gray } = renderScene([{ id: 7, size: TAG, R: I, t: [0, 0, 0.8] }], cam);
   const r = det.detect(gray, cam.w, cam.h); assert.equal(r.length, 1); assert.equal(r[0].pose, undefined); assert.equal(r[0].corners.length, 4);
   assert.equal(det.detect(new Uint8Array(cam.w * cam.h).fill(128), cam.w, cam.h).length, 0);
   assert.equal(renderScene([], cam, { noise: 40, seed: 5 }).gray.length, cam.w * cam.h);
@@ -86,6 +88,26 @@ await ok('foutmeldingen: NotAllowedError → uitleg over "Headset cameras"; geen
   assert.match(AprilTagCamera.explainError({ name: 'NotFoundError' }), /Experimental web platform features/);
   assert.match(AprilTagCamera.explainError({ name: 'NotReadableError' }), /in gebruik/);
   assert.match(AprilTagCamera.supportError(), /mediaDevices|getUserMedia/);
+});
+
+await ok('standaardmaat: een NIEUWE detector zonder setTagSize geeft t_z ≈ ware afstand voor een 82,55 mm tag (en 0,15 m default zou 1,8× te ver zijn)', async () => {
+  const d = await createAprilTagDetector();
+  const t = { id: 42, size: TAG, R: rotXYZ(0.1, -0.2, 0.3), t: [0.04, -0.03, 0.7] };
+  const { gray } = renderScene([t], cam, { noise: 2 }); d.setIntrinsics(cam.fx, cam.fy, cam.cx, cam.cy);
+  const p = d.detect(gray, cam.w, cam.h)[0].pose, err = Math.hypot(p.t[0] - t.t[0], p.t[1] - t.t[1], p.t[2] - t.t[2]);
+  console.log(`   standaardmaat: t_z=${p.t[2].toFixed(4)} m (waar ${t.t[2]}), fout ${(err * 1000).toFixed(2)} mm, pose.size=${p.size}`);
+  assert.ok(err < 0.003 && Math.abs(p.size - 0.08255) < 0.005);
+  d.setTagSize(0.15); const q = d.detect(gray, cam.w, cam.h)[0].pose;          // verkeerde maat -> afstand schaalt mee (controle dat de maat echt gebruikt wordt)
+  console.log(`   met 0,15 m: t_z=${q.t[2].toFixed(3)} m (verwacht ≈ ${(t.t[2] * 0.15 / TAG).toFixed(3)})`);
+  assert.ok(Math.abs(q.t[2] / p.t[2] - 0.15 / TAG) < 0.05);
+  d.setTagSize(0.2, 42); assert.ok(d.detect(gray, cam.w, cam.h)[0].pose.t[2] > q.t[2]);   // per-ID maat
+  d.destroy();
+});
+
+await ok('AprilTagCamera: standaard tagSize = 0.08255 (0 = geen pose, expliciet overschrijfbaar)', () => {
+  const mk = o => new AprilTagCamera({ videoWidth: 640 }, { getContext: () => ({}) }, o);
+  assert.equal(mk({}).tagSize, 0.08255); assert.equal(mk({ tagSize: 0.1 }).tagSize, 0.1); assert.equal(mk({ tagSize: 0 }).intrinsicsFor(640, 480), null);
+  const K = mk({}).intrinsicsFor(640, 480); assert.ok(K && K.fx > 0 && /schatting/.test(K.source));
 });
 det.destroy();
 console.log(`${n} tests ok`);
