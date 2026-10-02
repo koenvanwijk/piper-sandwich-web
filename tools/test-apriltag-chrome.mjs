@@ -1,6 +1,8 @@
 // Optioneel (vereist puppeteer-core + Chrome; niet in de repo-dependencies):
 //   node tools/make-tag-video.mjs /tmp/tags.y4m /tmp/tags-truth.json
-//   python3 -m http.server 8121 import puppeteer from 'puppeteer-core';   node tools/test-apriltag-chrome.mjs http://127.0.0.1:8121 /tmp/tags.y4m /tmp/tags-truth.json '&tagsize=0.09&hfov=62'
+//   python3 -m http.server 8121 &
+//   node tools/test-apriltag-chrome.mjs http://127.0.0.1:8121 /tmp/tags.y4m /tmp/tags-truth.json '&hfov=62'
+//   (tagsize = standaard 0.08255 m; of expliciet '&tagsize=0.08255&hfov=62')
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 const [base, video, truthFile, query = ''] = process.argv.slice(2);

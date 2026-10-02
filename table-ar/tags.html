@@ -29,14 +29,14 @@
   <div id="status">Klaar. Kies een camera en druk op Start.</div>
   <div class="row">
     <label>Camera <select id="cam"><option value="auto">auto (eerste achterkant-camera)</option><option value="left">links</option><option value="right">rechts</option><option value="front">front</option></select></label>
-    <label>Tag-zijde (m) <input id="size" type="number" step="0.001" min="0" placeholder="geen pose"></label>
+    <label>Tag-zijde (m) <input id="size" type="number" step="0.00005" min="0" value="0.08255" placeholder="0.08255" title="Standaard 0.08255 m = 82,55 mm; 0 = geen pose"></label>
     <label>HFOV (°) <input id="hfov" type="number" step="1" min="20" max="140" value="77"></label>
     <button id="start">Start</button><button id="stop" disabled>Stop</button><button id="list">Toon camera's</button>
   </div>
   <div id="view"><canvas id="tag-canvas" width="640" height="360"></canvas><div id="hudline">—</div></div>
   <video id="video" autoplay playsinline muted></video>
   <pre id="info">Nog geen detecties.</pre>
-  <p class="hint">URL-parameters: <code>?camera=left|right|front|&lt;label-deel&gt;</code> · <code>&amp;tagsize=0.10</code> (meter; zet pose aan) · <code>&amp;hfov=77</code> · <code>&amp;proc=960</code> (detectiebreedte) · <code>&amp;autostart=1</code>.
+  <p class="hint">URL-parameters: <code>?camera=left|right|front|&lt;label-deel&gt;</code> · <code>&amp;tagsize=0.08255</code> (meter, standaard 82,55 mm; <code>0</code> = geen pose) · <code>&amp;hfov=77</code> · <code>&amp;proc=960</code> (detectiebreedte) · <code>&amp;autostart=1</code>.
   Pose is een pose in het <b>camerabeeld</b>, niet automatisch in de XR-/tafelruimte; zonder echte intrinsics is de afstand een schatting.</p>
   <p class="hint"><a href="./">Table AR (3-punts kalibratie)</a> · <a href="../">Piper Sandwich VR</a></p>
 </main>

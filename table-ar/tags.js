@@ -1,4 +1,4 @@
-import { AprilTagCamera } from '../src/apriltag-camera.js';
+import { AprilTagCamera, DEFAULT_TAG_SIZE_M } from '../src/apriltag-camera.js';
 
 const $ = id => document.getElementById(id);
 const q = new URLSearchParams(location.search);
@@ -6,14 +6,14 @@ const statusEl = $('status'), info = $('info'), hud = $('hudline');
 const setStatus = (m, err = false) => { statusEl.textContent = m; statusEl.classList.toggle('err', err); };
 
 if (q.get('camera')) { const sel = $('cam'); if (![...sel.options].some(o => o.value === q.get('camera'))) sel.add(new Option(q.get('camera'), q.get('camera'))); sel.value = q.get('camera'); }
-if (q.get('tagsize')) $('size').value = q.get('tagsize');
+$('size').value = q.get('tagsize') ?? DEFAULT_TAG_SIZE_M;     // standaard 0,08255 m (82,55 mm); 0 = geen pose
 if (q.get('hfov')) $('hfov').value = q.get('hfov');
 
 let cam = null, lastDets = [];
 const f2 = (a, d = 1) => a.map(x => x.toFixed(d)).join(', ');
 
 function makeCam() {
-  const size = parseFloat($('size').value) || null;
+  const v = parseFloat($('size').value), size = Number.isFinite(v) && v >= 0 ? v : DEFAULT_TAG_SIZE_M;   // 0 = geen pose
   return new AprilTagCamera($('video'), $('tag-canvas'), {
     camera: $('cam').value, showVideo: false, tagSize: size, hfov: parseFloat($('hfov').value) || 77, procWidth: parseInt(q.get('proc') || '960', 10),
     onStatus: m => setStatus(m),

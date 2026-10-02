@@ -8,7 +8,8 @@
 //   pose    : alleen met intrinsics: { R: 3x3 rij-groot (R[rij][kolom]), t: [x,y,z] in meter, e: objectruimte-fout, size }
 //             Cameraframe: x rechts, y omlaag, z vooruit (zoals OpenCV). Tagframe: x rechts, y omlaag, z het vlak IN (van de kijker af).
 //             R draait tag- naar cameracoördinaten: p_cam = R·p_tag + t.
-export const DEFAULT_TAG_SIZE_M = 0.15;       // standaard van de C-code (apriltag_js.c); overschrijfbaar per ID
+export const DEFAULT_TAG_SIZE_M = 0.08255;    // 82,55 mm (3,25") zwarte vierkant van onze tags; de C-code zelf gebruikt 0,15 m, dat overschrijven we bij init
+
 export const MAX_TAG_ID = 600;               // grootte van de tagsize-tabel in de C-code
 
 export class AprilTagDetector {
@@ -26,6 +27,7 @@ export class AprilTagDetector {
     this.options = { decimate, sigma, refineEdges, maxDetections, returnPose };
     this._applyOptions();
     this.intrinsics = null;
+    this.setTagSize(DEFAULT_TAG_SIZE_M);       // alle ID's op de standaardmaat (de C-code start met 0,15 m)
   }
 
   _applyOptions() {
