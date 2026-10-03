@@ -4,7 +4,7 @@
 //   node tools/test-teleop-mapping.mjs
 import assert from 'node:assert/strict';
 import { createHeadlessSim } from './headless-sim.mjs';
-import { HandTeleop } from '../src/teleop.js';
+import { HandTeleop, teleopArm, twistAbout, orientationMode, rollAxisFromQuery, ROLL_MAX_STEP } from '../src/teleop.js';
 import { relaxBaseContacts } from '../src/sandwich-motion.js';
 import { controllerToRaw, mjToWorld, headYaw, homeFromHead, worldToRoot, rootToWorld, threeToMj } from '../src/xr-map.js';
 
@@ -13,25 +13,27 @@ const SIDES = ['left', 'right'];
 let n = 0; const ok = (name, f) => Promise.resolve(f()).then(() => { n++; console.log('ok', name); });
 const r3 = a => a.map(x => +x.toFixed(3));
 
-async function rig({ relax, lockOrientation = true, rootRotY = HOME_ROT, rootPos = ROOT_POS }) {
+async function rig({ relax, lockOrientation = true, mode = null, rootRotY = HOME_ROT, rootPos = ROOT_POS }) {
   const env = await createHeadlessSim({ relaxBase: false });
   if (relax) relaxBaseContacts(env.model);
-  const teleop = { left: new HandTeleop({ lockOrientation }), right: new HandTeleop({ lockOrientation }) };
+  const teleop = { left: new HandTeleop({ lockOrientation, mode }), right: new HandTeleop({ lockOrientation, mode }) };
+  env.qIK = {}; const log = { dq6: [] };
   const ctrl = { left: { pos: [-0.22, 1.0, -0.3], orient: [0, 0, 0, 1], grip: 1 }, right: { pos: [0.22, 1.0, -0.3], orient: [0, 0, 0, 1], grip: 1 } };
   const tcpWorld = s => mjToWorld(env.tcpPose(s).pos, rootPos, rootRotY);
   const step = (k = 1) => {
     for (let i = 0; i < k; i++) {
       for (const s of SIDES) {
         const c = ctrl[s], raw = { ...controllerToRaw(c.pos, c.orient, rootPos, rootRotY), trigger: 0, grip: c.grip };
-        const t = teleop[s].step(raw, env.tcpPose(s));
-        if (t.engaged) env.qTarget[s] = env.ik[s].solve(env.qTarget[s], t.pos, t.quat, 3);
+        const q6 = env.qTarget[s][5];
+        const t = teleopArm(env, s, teleop[s], env.ik[s], raw, env.tcpPose(s));      // dezelfde stap als app.js control()
+        if (s === 'right') log.dq6.push(Math.abs(env.qTarget[s][5] - q6));
         env.grip[s] = t.grip; env.ik[s].apply(env.qTarget[s], env.grip[s]);
       }
       for (let j = 0; j < 16; j++) env.mujoco.mj_step(env.model, env.data);
     }
   };
   const clutch = on => { for (const s of SIDES) ctrl[s].grip = on ? 1 : 0; step(1); };
-  return { env, ctrl, step, clutch, tcpWorld };
+  return { env, ctrl, step, clutch, tcpWorld, teleop, log };
 }
 
 // beweging (wereld, m) van het TCP als de controller `d` (wereld) verplaatst wordt; clutch loslaten/vastpakken per meting
@@ -124,5 +126,74 @@ for (const [name, ax, deg] of [['yaw (om wereld-y)', [0, 1, 0], 30], ['pitch (om
     assert.ok(Math.max(...errs) < 15, 'TCP-oriëntatie volgt de controllerdraai binnen 15° (gewrichtslimieten)');
   });
 }
+
+// ---- polsrol (standaard 'roll'-modus): controller-rol om de eigen (wijs)as -> joint6 ----
+const qm = (a, b) => [a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1], a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0], a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3], a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
+const P_AX = [0, 0, -1], deg = Math.PI / 180;
+const rollBody = (q0, d) => qm(q0, qAxis(P_AX, d * deg));                  // controller draait om zijn EIGEN wijsas (lichaams-frame)
+const qj = (env, s) => env.ik[s].currentQ();
+const settle = async (r, k = 90) => r.step(k);
+await ok('rol (standaard modus): controller 40° om eigen as -> joint6 +40° (±3°), positie en joint1–5 ongewijzigd; −40° -> −40°; ook als de controller schuin gehouden wordt', async () => {
+  for (const [name, q0] of [['recht', [0, 0, 0, 1]], ['40° omlaag gekanteld + 25° gedraaid', qm(qAxis([0, 1, 0], 25 * deg), qAxis([1, 0, 0], -40 * deg))]]) {
+    for (const sign of [1, -1]) {
+      const r = await rig({ relax: true, mode: 'roll' }); r.ctrl.right.orient = q0; r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+      const p0 = r.tcpWorld('right'), qa = qj(r.env, 'right'), a0 = tcpAxes(r.env, 'right');
+      r.ctrl.right.orient = rollBody(q0, sign * 40); await settle(r, 120);
+      const qb = qj(r.env, 'right'), d6 = (qb[5] - qa[5]) / deg, others = Math.max(...[0, 1, 2, 3, 4].map(i => Math.abs(qb[i] - qa[i]) / deg)), dp = Math.hypot(...r.tcpWorld('right').map((v, i) => v - p0[i]));
+      const a1 = tcpAxes(r.env, 'right'), approach = angle(a0[2], a1[2]);
+      console.log(`   ${name} ${sign > 0 ? '+' : '−'}40°: Δjoint6 = ${d6.toFixed(1)}°, max Δjoint1–5 = ${others.toFixed(2)}°, TCP-verplaatsing ${(dp * 1000).toFixed(1)} mm, aanvliegas gedraaid ${approach.toFixed(2)}°`);
+      assert.ok(Math.abs(d6 - sign * 40) < 3, 'joint6 volgt de rol'); assert.ok(others < 1.0, 'andere gewrichten blijven'); assert.ok(dp < 0.004, 'TCP-positie blijft'); assert.ok(approach < 1.0, 'aanvliegrichting blijft'); assert.ok(Math.abs(angle(a0[0], a1[0]) - 40) < 3.5, 'de gripper zelf (TCP-x-as) is ~40° gedraaid: ' + angle(a0[0], a1[0]).toFixed(1));
+      r.ctrl.right.orient = q0; await settle(r, 150); assert.ok(Math.abs(qj(r.env, 'right')[5] - qa[5]) < 3 * deg, 'terugrollen zet de gripper terug');
+    }
+  }
+});
+await ok('rol: andere draaiingen (yaw/pitch van de controller zonder rol) laten de gripper NIET rollen; links/rechts onafhankelijk', async () => {
+  const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+  const qa = qj(r.env, 'right'), ql = qj(r.env, 'left');
+  r.ctrl.right.orient = qAxis([0, 1, 0], 35 * deg); await settle(r, 80); assert.ok(Math.abs(qj(r.env, 'right')[5] - qa[5]) < 2 * deg, 'yaw rolt niet');
+  r.ctrl.right.orient = qAxis([1, 0, 0], 30 * deg); await settle(r, 80); assert.ok(Math.abs(qj(r.env, 'right')[5] - qa[5]) < 2 * deg, 'pitch rolt niet');
+  r.ctrl.right.orient = [0, 0, 0, 1]; r.ctrl.left.orient = rollBody([0, 0, 0, 1], 50); await settle(r, 120);
+  assert.ok(Math.abs(qj(r.env, 'left')[5] - ql[5] - 50 * deg) < 3 * deg, 'linker controller rolt linker gripper'); assert.ok(Math.abs(qj(r.env, 'right')[5] - qa[5]) < 2 * deg, 'rechter blijft');
+});
+await ok('rol: geen sprongen (≤ ROLL_MAX_STEP per stap), tot de jointlimiet (±120°) geklemd bij 170°-rol, geen NaN; terugrollen vanaf de limiet', async () => {
+  const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+  const lim = r.env.ik.right.rng[5], q6a = qj(r.env, 'right')[5]; r.log.dq6.length = 0;
+  r.ctrl.right.orient = rollBody([0, 0, 0, 1], 90); r.step(1); r.ctrl.right.orient = rollBody([0, 0, 0, 1], 170); await settle(r, 150);   // sprong in de invoer van 90° -> 170°
+  const q6 = qj(r.env, 'right')[5]; assert.ok(Number.isFinite(q6) && q6 <= lim[1] + 1e-3 && q6 >= lim[0] - 1e-3, `q6 ${q6 / deg}° binnen limiet`);
+  assert.ok(q6 > lim[1] - 0.1, 'bereikt ~de limiet'); assert.ok(Math.max(...r.log.dq6) <= ROLL_MAX_STEP + 1e-6, 'max stap per tick ' + Math.max(...r.log.dq6).toFixed(3) + ' rad');
+  const t = r.env.data.ctrl, act = r.env.ik.right.act[5]; assert.ok(t[act] <= lim[1] + 1e-6, 'ctrl binnen limiet');
+  console.log(`   joint6: ${(q6a / deg).toFixed(0)}° -> ${(q6 / deg).toFixed(0)}° (limiet ${(lim[1] / deg).toFixed(0)}°), max stap ${(Math.max(...r.log.dq6) / deg).toFixed(1)}°/tick`);
+  r.ctrl.right.orient = rollBody([0, 0, 0, 1], 20); await settle(r, 150); assert.ok(qj(r.env, 'right')[5] < 40 * deg, 'terug van de limiet');
+});
+await ok('rol blijft na loslaten van de grip (gebakken), nieuwe grip = nieuw anker zonder sprong; modus lock (?rot=0/?roll=0) rolt niet', async () => {
+  const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+  const q6a = qj(r.env, 'right')[5]; r.ctrl.right.orient = rollBody([0, 0, 0, 1], 45); await settle(r, 100);
+  const q6b = qj(r.env, 'right')[5]; assert.ok(Math.abs(q6b - q6a - 45 * deg) < 3 * deg);
+  r.clutch(false); r.step(30); assert.ok(Math.abs(qj(r.env, 'right')[5] - q6b) < 1.5 * deg, 'blijft staan na loslaten');
+  r.ctrl.right.orient = [0, 0, 0, 1]; r.log.dq6.length = 0; r.clutch(true); await settle(r, 30);
+  assert.ok(Math.abs(qj(r.env, 'right')[5] - q6b) < 2 * deg, 'geen sprong bij nieuwe grip (controller staat nu anders)'); assert.ok(Math.max(...r.log.dq6) < 0.01);
+  r.ctrl.right.orient = rollBody([0, 0, 0, 1], -30); await settle(r, 100); assert.ok(Math.abs(qj(r.env, 'right')[5] - q6b + 30 * deg) < 3 * deg, 'verder rollen vanaf de nieuwe stand');
+  const l = await rig({ relax: true, mode: 'lock' }); l.clutch(false); l.step(20); l.clutch(true); await settle(l, 5); const qa = qj(l.env, 'right')[5];
+  l.ctrl.right.orient = rollBody([0, 0, 0, 1], 60); await settle(l, 100); assert.ok(Math.abs(qj(l.env, 'right')[5] - qa) < 2 * deg, 'lock-modus: geen rol (oud gedrag)');
+});
+await ok('rol + translatie tegelijk: positie volgt nog (≤ 8 mm) en joint6 rolt 35° t.o.v. dezelfde beweging zonder rol; aanvliegas blijft vergrendeld', async () => {
+  const run = async rollDeg => {
+    const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+    const p0 = r.tcpWorld('right'), c0 = r.ctrl.right.pos.slice(), a0 = tcpAxes(r.env, 'right');
+    r.ctrl.right.pos = [c0[0] + 0.08, c0[1] + 0.05, c0[2] - 0.08]; r.ctrl.right.orient = rollBody([0, 0, 0, 1], rollDeg); await settle(r, 150);
+    return { dp: r.tcpWorld('right').map((v, i) => v - p0[i]), q6: qj(r.env, 'right')[5], appr: angle(a0[2], tcpAxes(r.env, 'right')[2]) };
+  };
+  const a = await run(0), b = await run(35), want = [0.08, 0.05, -0.08];
+  console.log(`   TCP-verplaatsing ${r3(b.dp)} (gewenst ${want}); Δjoint6 door rol = ${((b.q6 - a.q6) / deg).toFixed(1)}° (35° verwacht); aanvliegas ${b.appr.toFixed(2)}° gedraaid`);
+  assert.ok(Math.hypot(...b.dp.map((v, i) => v - want[i])) < 0.008); assert.ok(Math.abs(b.q6 - a.q6 - 35 * deg) < 3 * deg); assert.ok(b.appr < 1.5);
+});
+await ok('twistAbout/orientationMode/rollAxis: pure wiskunde en query-parsing', () => {
+  const id = [1, 0, 0, 0], Rz = a => [Math.cos(a / 2), 0, 0, Math.sin(a / 2)];
+  assert.ok(Math.abs(twistAbout(id, Rz(-0.5)) - 0.5) < 1e-9, 'rotatie −0,5 rad om +z = +0,5 rad om de wijsas (−z)');
+  assert.ok(Math.abs(twistAbout(id, [Math.cos(0.3), Math.sin(0.3), 0, 0])) < 1e-9, 'pure swing = 0 twist');
+  assert.ok(Math.abs(twistAbout(id, Rz(-0.5).map(x => -x)) - 0.5) < 1e-9, 'dubbele dekking q ≡ −q');
+  assert.equal(orientationMode(''), 'roll'); assert.equal(orientationMode('?rot=1'), 'full'); assert.equal(orientationMode('?rot=0'), 'lock'); assert.equal(orientationMode('?roll=0'), 'lock'); assert.equal(orientationMode('?tags=1&debug=1'), 'roll');
+  assert.deepEqual(rollAxisFromQuery('?rollaxis=1,0,0'), [1, 0, 0]); assert.deepEqual(rollAxisFromQuery('?rollaxis=x'), [0, 0, -1]); assert.deepEqual(rollAxisFromQuery(''), [0, 0, -1]);
+});
 console.log(`${n} tests ok`);
 process.exit(0);

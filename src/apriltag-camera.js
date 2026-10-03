@@ -49,12 +49,12 @@ export class AprilTagCamera {
    * @param video   <video> (verborgen mag)
    * @param canvas  <canvas>: krijgt het (verkleinde) camerabeeld + overlay van gedetecteerde tags
    * @param opts    onStatus(msg), onDetections(list), onFrame(info) per verwerkt frame, camera:'auto'|'left'|'right'|..., deviceId,
-   *                procWidth (breedte detectiebeeld, standaard 960), tagSize (m, standaard 0.08255; 0 of null = geen pose), hfov (graden), maxFps, draw (bool)
+   *                dutyCycle (0 = uit; bv. 0.25 = detectie neemt max. ~25% van de hoofdthread), procWidth (breedte detectiebeeld, standaard 960), tagSize (m, standaard 0.08255; 0 of null = geen pose), hfov (graden), maxFps, draw (bool)
    */
   constructor(video, canvas, opts = {}) {
     const { onStatus = () => {}, onDetections = () => {}, onFrame = () => {}, camera = 'auto', deviceId = null, procWidth = 960,
-            tagSize = DEFAULT_TAG_SIZE_M, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true, latencyMs = DEFAULT_CAPTURE_LATENCY_MS } = opts;
-    Object.assign(this, { video, canvas, onStatus, onDetections, onFrame, want: camera, deviceId, procWidth, tagSize, hfov, maxFps, draw, showVideo, latencyMs });
+            tagSize = DEFAULT_TAG_SIZE_M, hfov = DEFAULT_HFOV_DEG, maxFps = 30, draw = true, showVideo = true, latencyMs = DEFAULT_CAPTURE_LATENCY_MS, dutyCycle = 0 } = opts;
+    Object.assign(this, { video, canvas, onStatus, onDetections, onFrame, want: camera, deviceId, procWidth, tagSize, hfov, maxFps, draw, showVideo, latencyMs, dutyCycle });
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
     this.stream = null; this.detector = null; this.running = false; this.device = null; this.lastCapture = null; this.devices = [];
     this.fps = { frames: 0, t0: 0, value: 0, detMs: 0 };
@@ -156,7 +156,9 @@ export class AprilTagCamera {
   step(now, meta, next) {
     try {
       const v = this.video;
-      if (v.videoWidth && now - this._lastT >= 1000 / this.maxFps - 2) {
+      // dutyCycle > 0: houd de hoofdthread vrij voor renderen (WASM-detectie ~40 ms/frame bij 960 px): minstens detMs/dutyCycle tussen de starts van twee frames
+      const minGap = Math.max(1000 / this.maxFps - 2, this.dutyCycle > 0 && this.fps.detMs ? this.fps.detMs / this.dutyCycle : 0);
+      if (v.videoWidth && now - this._lastT >= minGap) {
         this._lastT = now; this.processFrame(now, meta);
       }
     } catch (e) { this.lastError = e.message || String(e); this.onStatus('Detectiefout: ' + this.lastError); }

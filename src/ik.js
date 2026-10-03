@@ -81,6 +81,11 @@ export class ArmIK {
     return q;
   }
 
+  /** joint6 (gripper-rol) offset-venster [min,max] (rad) t.o.v. q[5], binnen de jointlimiet (met kleine marge). */
+  rollLimits(q) { const m = 0.02; return [this.rng[5][0] + m - q[5], this.rng[5][1] - m - q[5]]; }
+  /** q met de rol-offset bij joint6 opgeteld en op de jointlimiet geklemd (q zelf blijft ongemoeid). */
+  withRoll(q, roll) { if (!roll) return q; const r = q.slice(); r[5] = Math.min(this.rng[5][1], Math.max(this.rng[5][0], q[5] + roll)); return r; }
+
   // write arm + gripper targets into ctrl. grip: 0 open .. 1 closed
   apply(q, grip) {
     const c = this.data.ctrl;
