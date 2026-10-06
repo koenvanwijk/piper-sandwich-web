@@ -81,10 +81,15 @@ export class ArmIK {
     return q;
   }
 
-  /** joint6 (gripper-rol) offset-venster [min,max] (rad) t.o.v. q[5], binnen de jointlimiet (met kleine marge). */
-  rollLimits(q) { const m = 0.02; return [this.rng[5][0] + m - q[5], this.rng[5][1] - m - q[5]]; }
-  /** q met de rol-offset bij joint6 opgeteld en op de jointlimiet geklemd (q zelf blijft ongemoeid). */
+  /** Offset-vensters [min,max] (rad) t.o.v. huidige q, binnen jointlimiet (kleine marge). */
+  rollLimits(q) { const m = 0.02; return [this.rng[5][0] + m - q[5], this.rng[5][1] - m - q[5]]; }  // joint6
+  tiltLimits(q) { const m = 0.02; return [this.rng[4][0] + m - q[4], this.rng[4][1] - m - q[4]]; }  // joint5
+  yawLimits(q)  { const m = 0.02; return [this.rng[3][0] + m - q[3], this.rng[3][1] - m - q[3]]; }  // joint4
   withRoll(q, roll) { if (!roll) return q; const r = q.slice(); r[5] = Math.min(this.rng[5][1], Math.max(this.rng[5][0], q[5] + roll)); return r; }
+  withTilt(q, tilt) { if (!tilt) return q; const r = q.slice(); r[4] = Math.min(this.rng[4][1], Math.max(this.rng[4][0], q[4] + tilt)); return r; }
+  withYaw(q, yaw)   { if (!yaw)  return q; const r = q.slice(); r[3] = Math.min(this.rng[3][1], Math.max(this.rng[3][0], q[3] + yaw));  return r; }
+  /** qIK + yaw→j4 + tilt→j5 + rol→j6 (geklemd). */
+  withWrist(q, roll = 0, tilt = 0, yaw = 0) { return this.withRoll(this.withTilt(this.withYaw(q, yaw), tilt), roll); }
 
   // write arm + gripper targets into ctrl. grip: 0 open .. 1 closed
   apply(q, grip) {

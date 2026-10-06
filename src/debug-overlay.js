@@ -7,11 +7,11 @@ const f = (a, d = 2) => a ? '[' + a.map(x => (x >= 0 ? '+' : '') + x.toFixed(d))
 export function formatDebug(d) {
   const L = [];
   L.push(`DEBUG  xr=${d.xr ? 'ja' : 'nee'}  refspace=${d.refSpace || '—'}  scene rotY=${(d.rootRotY * 180 / Math.PI).toFixed(0)}°  head yaw=${d.headYaw == null ? '—' : (d.headYaw * 180 / Math.PI).toFixed(0) + '°'}`);
-  L.push(`orient-mode: ${{ full: 'volledig (?rot=1)', roll: 'rol → joint6 (standaard)', lock: 'vergrendeld (?rot=0)' }[d.rot] || d.rot}   inputSources: ${d.sources.map(s => s.handedness + (s.profile ? '(' + s.profile + ')' : '')).join(', ') || '—'}`);
+  L.push(`orient-mode: ${{ full: 'volledig (?rot=1)', roll: 'yaw→j4 + tilt→j5 + rol→j6', lock: 'vergrendeld (?rot=0)' }[d.rot] || d.rot}   inputSources: ${d.sources.map(s => s.handedness + (s.profile ? '(' + s.profile + ')' : '')).join(', ') || '—'}`);
   for (const s of ['left', 'right']) {
     const c = d.ctrl[s];
     if (!c) { L.push(`${s.toUpperCase()}: geen controller`); continue; }
-    L.push(`${s.toUpperCase()}: grip=${c.grip.toFixed(2)} trig=${c.trigger.toFixed(2)} ${c.engaged ? 'ENGAGED' : 'los'}${c.roll != null ? `  rol→j6 ${(c.roll * 180 / Math.PI).toFixed(0)}°` : ''}`);
+    L.push(`${s.toUpperCase()}: grip=${c.grip.toFixed(2)} trig=${c.trigger.toFixed(2)} ${c.engaged ? 'ENGAGED' : 'los'}${c.yaw != null ? `  yaw→j4 ${(c.yaw * 180 / Math.PI).toFixed(0)}°` : ''}${c.tilt != null ? `  tilt→j5 ${(c.tilt * 180 / Math.PI).toFixed(0)}°` : ''}${c.roll != null ? `  rol→j6 ${(c.roll * 180 / Math.PI).toFixed(0)}°` : ''}`);
     L.push(`  wereld ${f(c.world)}  scène-lokaal(mj) ${f(c.mj)}`);
     L.push(`  doel(mj) ${f(c.target)}  tcp(mj) ${f(c.tcp)}  Δdoel ${f(c.delta)}`);
   }

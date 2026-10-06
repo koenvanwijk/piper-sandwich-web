@@ -194,13 +194,12 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
 - **Orientation (`?rot=1`):** the TCP orientation follows the controller's rotation *relative to the moment the clutch (grip) was pressed*
   (`HandTeleop`, `lockOrientation: false`). Simulated: a 30° yaw / 25° pitch / 25° roll of the controller rotates the TCP axes to within ~1° of the same
   world rotation (limited by joint ranges).
-- **Wrist roll (default; `?rot=0` / `?roll=0` = old fully-locked wrist):** *Cause of "I roll the controller but the gripper does not roll":* the TCP orientation was **locked** by default (only `?rot=1`
-  followed the controller, and then the damped-least-squares IK spreads a roll over `joint4` *and* `joint6`, which share an axis when `joint5 ≈ 0`, and fights the other rotations). Now the **twist of the controller about its own
-  pointing axis** (grip-space −z; `?rollaxis=x,y,z` to change) relative to the clutch moment drives **only `joint6`** (the last joint, its axis passes through the TCP, so position and the rest of the orientation stay locked):
-  rolling the controller +40° rolls the gripper +38° (dead zone 1.7°), −40° → −38°, yaw/pitch of the controller do not roll it.
-  Safety: rate-limited (≤ 0.12 rad per tick, no jumps), clamped to the joint range (±120°, small margin, no wind-up beyond the limit), the roll is kept when the grip is released and a new grip starts from the current wrist angle.
-  Left/right independent. `?rot=1` = full 6-DOF orientation as before. Code: `src/teleop.js` (`twistAbout`, `HandTeleop` mode `roll`, `teleopArm`), `ArmIK.withRoll/rollLimits`. Tests: `tools/test-teleop-mapping.mjs`.
-  *Not tested on a real Quest:* whether grip −z is the axis you instinctively roll about (the handle is tilted vs. the pointing ray) – use `?rollaxis=` and `?debug=1` (shows `rol→j6`) to tune.
+- **Wrist yaw + tilt + roll (default; `?rot=0` / `?roll=0` / `?orient=0` = old fully-locked wrist):** *Cause:* TCP orientation was **locked** by default; `?rot=1` used full 6-DOF DLS-IK which spreads roll over `joint4` and `joint6` (parallel when `joint5 ≈ 0`). Now each controller body-axis twist maps **directly** to one wrist joint (no IK spread), relative to the clutch moment:
+  - **yaw** (grip +y) → `joint4` (±100°, `?yaw=0` off, `?yawaxis=`)
+  - **tilt/pitch** (grip +x) → `joint5` (±70°, `?tilt=0` off, `?tiltaxis=`)
+  - **roll** (grip −z, pointing axis) → `joint6` (±120°, `?rollaxis=`)
+  Safety (all three): dead zone ~1.7°, rate-limited ≤ 0.12 rad/tick (no jumps), clamped to joint limits, kept when grip is released (baked into `qTarget`; new grip re-anchors). Position still follows clutched translation. `?rot=1` = full 6-DOF orientation via IK as before (different path). Code: `src/teleop.js` (`twistAbout`, mode `roll`, `teleopArm`), `ArmIK.withWrist` / `yawLimits`/`tiltLimits`/`rollLimits`. Tests: `tools/test-teleop-mapping.mjs`.
+  *Not tested on a real Quest:* axis feel vs. the tilted Quest handle — use `?rollaxis=`/`?tiltaxis=`/`?yawaxis=` and `?debug=1` (`yaw→j4` / `tilt→j5` / `rol→j6`) to tune.
 - **`?debug=1`:** overlay (DOM + head-locked panel in VR) per controller: handedness, profile, world pose, scene-local pose (MuJoCo), clutch,
   target TCP, actual TCP and Δ. Move a controller 20 cm to the right: `Δ`/`doel` y must go to −0.2 (MuJoCo) and the arm must follow.
 - **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
