@@ -135,13 +135,38 @@ export class HandTeleop {
  * qIK = IK zonder pols-offsets; qTarget = qIK + offsets (geklemd).
  */
 export function teleopArm(st, side, teleop, ik, raw, tcp, iters = 3) {
-  const seed = teleop.engaged && st.qIK[side] ? st.qIK[side] : st.qTarget[side].slice();
+  const wasEngaged = teleop.engaged;
+  const seed = wasEngaged && st.qIK[side] ? st.qIK[side] : st.qTarget[side].slice();
   const t = teleop.step(raw, tcp, {
     roll: ik.rollLimits(seed), tilt: ik.tiltLimits(seed), yaw: ik.yawLimits(seed),
   });
-  if (t.engaged) {
+  if (!t.engaged) { teleop._wristBase = null; return t; }
+  // Nieuw anker: polsbasis = huidige stand (incl. eerder gebakken offsets), offsets starten op 0.
+  if (!wasEngaged || !teleop._wristBase) teleop._wristBase = seed.slice(3, 6);
+  if (teleop.mode === 'roll') {
+    // 1) volledige IK (positie + vergrendelde oriëntatie)
+    let q = ik.solve(seed, t.pos, t.quat, iters).slice();
+    const b = teleop._wristBase;
+    const freeze = [5];                                         // rol → j6 altijd
+    q[5] = Math.min(ik.rng[5][1], Math.max(ik.rng[5][0], b[2] + (t.roll || 0)));
+    if (teleop.yawEnabled) {
+      q[3] = Math.min(ik.rng[3][1], Math.max(ik.rng[3][0], b[0] + (t.yaw || 0)));
+      freeze.push(3);
+    }
+    if (teleop.tiltEnabled) {
+      q[4] = Math.min(ik.rng[4][1], Math.max(ik.rng[4][0], b[1] + (t.tilt || 0)));
+      freeze.push(4);
+    }
+    // 2) als j4/j5 gezet zijn: positie nabewerken (j6 beweegt TCP niet)
+    if (freeze.length > 1) q = ik.solvePos(q, t.pos, iters, { freeze });
+    st.qIK[side] = q.slice();
+    st.qIK[side][5] = b[2];
+    if (teleop.yawEnabled) st.qIK[side][3] = b[0];
+    if (teleop.tiltEnabled) st.qIK[side][4] = b[1];
+    st.qTarget[side] = q;
+  } else {
     st.qIK[side] = ik.solve(seed, t.pos, t.quat, iters);
-    st.qTarget[side] = ik.withWrist(st.qIK[side], t.roll, t.tilt, t.yaw);
+    st.qTarget[side] = st.qIK[side];
   }
   return t;
 }

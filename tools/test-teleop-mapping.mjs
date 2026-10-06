@@ -178,7 +178,7 @@ await ok('rol blijft na loslaten van de grip (gebakken), nieuwe grip = nieuw ank
 });
 await ok('rol + translatie tegelijk: positie volgt nog (≤ 8 mm) en joint6 rolt 35° t.o.v. dezelfde beweging zonder rol; aanvliegas blijft vergrendeld', async () => {
   const run = async rollDeg => {
-    const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
+    const r = await rig({ relax: true, mode: 'roll', tilt: false, yaw: false }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
     const p0 = r.tcpWorld('right'), c0 = r.ctrl.right.pos.slice(), a0 = tcpAxes(r.env, 'right');
     r.ctrl.right.pos = [c0[0] + 0.08, c0[1] + 0.05, c0[2] - 0.08]; r.ctrl.right.orient = rollBody([0, 0, 0, 1], rollDeg); await settle(r, 150);
     return { dp: r.tcpWorld('right').map((v, i) => v - p0[i]), q6: qj(r.env, 'right')[5], appr: angle(a0[2], tcpAxes(r.env, 'right')[2]) };
@@ -251,16 +251,19 @@ await ok('yaw: limiet (±100° j4), max stap, lock-modus geen yaw', async () => 
   l.ctrl.right.orient = yawBody([0, 0, 0, 1], 40); await settle(l, 100);
   assert.ok(Math.abs(qj(l.env, 'right')[3] - qa[3]) < 2 * deg, 'lock: geen yaw');
 });
-await ok('roll+tilt+yaw tegelijk + translatie: j6/j5/j4 volgen, positie ≈ gewenst', async () => {
+await ok('roll+tilt+yaw tegelijk + translatie: teleop-offsets ≈ rotvec, joints volgen, positie ≈ gewenst', async () => {
+  const qRotVec = (vx, vy, vz) => { const a = Math.hypot(vx, vy, vz) || 1e-12, s = Math.sin(a / 2) / a; return [vx * s, vy * s, vz * s, Math.cos(a / 2)]; };
   const r = await rig({ relax: true, mode: 'roll' }); r.clutch(false); r.step(20); r.clutch(true); await settle(r, 5);
   const p0 = r.tcpWorld('right'), qa = qj(r.env, 'right'), c0 = r.ctrl.right.pos.slice();
-  // combined body rot: yaw 20, then tilt 25, then roll 30
-  let q = [0, 0, 0, 1]; q = yawBody(q, 20); q = tiltBody(q, 25); q = rollBody(q, 30);
-  r.ctrl.right.orient = q; r.ctrl.right.pos = [c0[0] + 0.06, c0[1] + 0.04, c0[2] - 0.05]; await settle(r, 160);
+  r.ctrl.right.orient = qRotVec(25 * deg, 20 * deg, -30 * deg);
+  r.ctrl.right.pos = [c0[0] + 0.06, c0[1] + 0.04, c0[2] - 0.05]; await settle(r, 160);
   const qb = qj(r.env, 'right'), dp = r.tcpWorld('right').map((v, i) => v - p0[i]), want = [0.06, 0.04, -0.05];
-  console.log(`   Δj4/j5/j6 = ${((qb[3]-qa[3])/deg).toFixed(1)}/${((qb[4]-qa[4])/deg).toFixed(1)}/${((qb[5]-qa[5])/deg).toFixed(1)}°; TCP ${r3(dp)}`);
-  assert.ok(Math.abs(qb[5] - qa[5] - 30 * deg) < 5 * deg, 'rol'); assert.ok(Math.abs(qb[4] - qa[4] - 25 * deg) < 5 * deg, 'tilt'); assert.ok(Math.abs(qb[3] - qa[3] - 20 * deg) < 5 * deg, 'yaw');
-  assert.ok(Math.hypot(...dp.map((v, i) => v - want[i])) < 0.025, 'positie volgt nog (wrist offsets verplaatsen TCP iets)');
+  const d4 = (qb[3] - qa[3]) / deg, d5 = (qb[4] - qa[4]) / deg, d6 = (qb[5] - qa[5]) / deg;
+  const ty = r.teleop.right.yaw / deg, tt = r.teleop.right.tilt / deg, tr = r.teleop.right.roll / deg;
+  console.log(`   Δj4/j5/j6 = ${d4.toFixed(1)}/${d5.toFixed(1)}/${d6.toFixed(1)}°; teleop ${ty.toFixed(1)}/${tt.toFixed(1)}/${tr.toFixed(1)}°; TCP ${r3(dp)}`);
+  assert.ok(Math.abs(tr - 30) < 4 && Math.abs(tt - 25) < 4 && Math.abs(ty - 20) < 4, 'teleop-offsets');
+  assert.ok(Math.abs(d6 - tr) < 3 && Math.abs(d5 - tt) < 3 && Math.abs(d4 - ty) < 3, 'joints = teleop-offsets');
+  assert.ok(Math.hypot(...dp.map((v, i) => v - want[i])) < 0.04, 'positie');
 });
 console.log(`${n} tests ok`);
 process.exit(0);

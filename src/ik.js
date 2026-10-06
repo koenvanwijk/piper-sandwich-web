@@ -50,8 +50,10 @@ export class ArmIK {
     return [p, mat2quat(m)];
   }
 
-  solve(q, tpos, tquat, iters = 3) {
+  /** freeze: joint-indices (0..5) die niet meebewegen — voor wrist-overlay (j4/j5/j6) zodat IK de offsets niet wegwerkt. */
+  solve(q, tpos, tquat, iters = 3, { freeze = [] } = {}) {
     q = q.slice();
+    const frozen = new Set(freeze);
     for (let it = 0; it < iters; it++) {
       const [p0, q0] = this.fk(q);
       const err = [tpos[0]-p0[0], tpos[1]-p0[1], tpos[2]-p0[2], ...rotErr(tquat, q0)];
@@ -73,9 +75,45 @@ export class ArmIK {
         A[a][b] = s + (a === b ? l2 : 0);
       }
       const dq = solve6(A, JTe);
-      for (let i = 0; i < 6; i++)
+      for (let i = 0; i < 6; i++) {
+        if (frozen.has(i)) continue;
         q[i] = Math.min(this.rng[i][1], Math.max(this.rng[i][0],
                  q[i] + Math.max(-this.maxStep, Math.min(this.maxStep, dq[i]))));
+      }
+      if (Math.hypot(...err) < 1e-4) break;
+    }
+    return q;
+  }
+
+  /** Alleen positie-IK (geen oriëntatiefout); optioneel freeze van joint-indices. */
+  solvePos(q, tpos, iters = 3, { freeze = [] } = {}) {
+    q = q.slice();
+    const frozen = new Set(freeze);
+    for (let it = 0; it < iters; it++) {
+      const [p0] = this.fk(q);
+      const err = [tpos[0]-p0[0], tpos[1]-p0[1], tpos[2]-p0[2]];
+      const J = [[], [], []];
+      for (let j = 0; j < 6; j++) {
+        const qj = q.slice(); qj[j] += this.eps;
+        const [p1] = this.fk(qj);
+        for (let r = 0; r < 3; r++) J[r][j] = (p1[r] - p0[r]) / this.eps;
+      }
+      // 6×6 DLS op positie: J is 3×6, bouw JTJ
+      const l2 = this.damping * this.damping, A = [], JTe = [];
+      for (let a = 0; a < 6; a++) {
+        let s = 0; for (let k = 0; k < 3; k++) s += J[k][a] * err[k]; JTe.push(s);
+        A.push(new Array(6).fill(0));
+      }
+      for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) {
+        let s = 0; for (let k = 0; k < 3; k++) s += J[k][a] * J[k][b];
+        A[a][b] = s + (a === b ? l2 : 0);
+      }
+      const dq = solve6(A, JTe);
+      for (let i = 0; i < 6; i++) {
+        if (frozen.has(i)) continue;
+        q[i] = Math.min(this.rng[i][1], Math.max(this.rng[i][0],
+                 q[i] + Math.max(-this.maxStep, Math.min(this.maxStep, dq[i]))));
+      }
       if (Math.hypot(...err) < 1e-4) break;
     }
     return q;
