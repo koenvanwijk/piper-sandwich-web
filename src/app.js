@@ -4,7 +4,7 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 import load_mujoco from '../vendor/mujoco/mujoco.js';
 import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from './scene-loader.js';
 import { ArmIK } from './ik.js';
-import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery } from './teleop.js';
+import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery, tiltAxisFromQuery, yawAxisFromQuery, tiltEnabledFromQuery, yawEnabledFromQuery } from './teleop.js';
 import { mat2quat } from './qmath.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
@@ -22,10 +22,12 @@ const RECCFG = parseRecConfig();
 // vanaf de clutch) stuurt ook de TCP-oriëntatie aan; standaard blijft de pols-oriëntatie vergrendeld (zoals voorheen).
 const _Q = new URLSearchParams(location.search);
 const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _Q.get('headhome') === '1';
-// Oriëntatiemodus van de controller (zie src/teleop.js): standaard 'roll' = controller-rol om zijn eigen as -> gripper-rol (joint6);
-// ?rot=1 = volledige relatieve oriëntatie; ?rot=0 of ?roll=0 = oud gedrag (pols vergrendeld); ?rollaxis=x,y,z = andere controller-as (standaard 0,0,-1).
-const ORI_MODE = orientationMode(location.search), ROLL_AXIS_Q = rollAxisFromQuery(location.search);
-const newTeleop = () => new HandTeleop({ mode: ORI_MODE, rollAxis: ROLL_AXIS_Q });
+// Oriëntatiemodus (src/teleop.js): standaard 'roll' = yaw→j4 + tilt→j5 + rol→j6; ?rot=1 = volledige 6-DOF-IK;
+// ?rot=0/?roll=0/?orient=0 = pols vergrendeld; ?tilt=0 / ?yaw=0 schakelt assen uit; ?rollaxis=/?tiltaxis=/?yawaxis=.
+const ORI_MODE = orientationMode(location.search);
+const ROLL_AXIS_Q = rollAxisFromQuery(location.search), TILT_AXIS_Q = tiltAxisFromQuery(location.search), YAW_AXIS_Q = yawAxisFromQuery(location.search);
+const TILT_ON = tiltEnabledFromQuery(location.search), YAW_ON = yawEnabledFromQuery(location.search);
+const newTeleop = () => new HandTeleop({ mode: ORI_MODE, rollAxis: ROLL_AXIS_Q, tiltAxis: TILT_AXIS_Q, yawAxis: YAW_AXIS_Q, tilt: TILT_ON, yaw: YAW_ON });
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -372,7 +374,7 @@ class SandwichVR {
       const t = (this._dbgT || {})[s], tcp = this.tcpPose(s).pos;
       const tgt = t && t.engaged ? t.pos : null;
       out.ctrl[s] = { world: c.world, mj: [c.pos[0], -c.pos[2], c.pos[1]], grip: c.grip, trigger: c.trigger,
-        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
+        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, tilt: t && t.engaged ? t.tilt : 0, yaw: t && t.engaged ? t.yaw : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
     }
     return out;
   }
@@ -402,7 +404,7 @@ class SandwichVR {
         this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
       }
     } else for (const s of SIDES) {
-      const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s));   // incl. controller-rol -> joint6 (src/teleop.js)
+      const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s));   // rol→j6, tilt→j5 (src/teleop.js)
       if (DEBUG) (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
         this.grip[s] = t.grip;

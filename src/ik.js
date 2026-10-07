@@ -50,8 +50,10 @@ export class ArmIK {
     return [p, mat2quat(m)];
   }
 
-  solve(q, tpos, tquat, iters = 3) {
+  /** freeze: joint-indices (0..5) die niet meebewegen — voor wrist-overlay (j4/j5/j6) zodat IK de offsets niet wegwerkt. */
+  solve(q, tpos, tquat, iters = 3, { freeze = [] } = {}) {
     q = q.slice();
+    const frozen = new Set(freeze);
     for (let it = 0; it < iters; it++) {
       const [p0, q0] = this.fk(q);
       const err = [tpos[0]-p0[0], tpos[1]-p0[1], tpos[2]-p0[2], ...rotErr(tquat, q0)];
@@ -73,18 +75,59 @@ export class ArmIK {
         A[a][b] = s + (a === b ? l2 : 0);
       }
       const dq = solve6(A, JTe);
-      for (let i = 0; i < 6; i++)
+      for (let i = 0; i < 6; i++) {
+        if (frozen.has(i)) continue;
         q[i] = Math.min(this.rng[i][1], Math.max(this.rng[i][0],
                  q[i] + Math.max(-this.maxStep, Math.min(this.maxStep, dq[i]))));
+      }
       if (Math.hypot(...err) < 1e-4) break;
     }
     return q;
   }
 
-  /** joint6 (gripper-rol) offset-venster [min,max] (rad) t.o.v. q[5], binnen de jointlimiet (met kleine marge). */
-  rollLimits(q) { const m = 0.02; return [this.rng[5][0] + m - q[5], this.rng[5][1] - m - q[5]]; }
-  /** q met de rol-offset bij joint6 opgeteld en op de jointlimiet geklemd (q zelf blijft ongemoeid). */
+  /** Alleen positie-IK (geen oriëntatiefout); optioneel freeze van joint-indices. */
+  solvePos(q, tpos, iters = 3, { freeze = [] } = {}) {
+    q = q.slice();
+    const frozen = new Set(freeze);
+    for (let it = 0; it < iters; it++) {
+      const [p0] = this.fk(q);
+      const err = [tpos[0]-p0[0], tpos[1]-p0[1], tpos[2]-p0[2]];
+      const J = [[], [], []];
+      for (let j = 0; j < 6; j++) {
+        const qj = q.slice(); qj[j] += this.eps;
+        const [p1] = this.fk(qj);
+        for (let r = 0; r < 3; r++) J[r][j] = (p1[r] - p0[r]) / this.eps;
+      }
+      // 6×6 DLS op positie: J is 3×6, bouw JTJ
+      const l2 = this.damping * this.damping, A = [], JTe = [];
+      for (let a = 0; a < 6; a++) {
+        let s = 0; for (let k = 0; k < 3; k++) s += J[k][a] * err[k]; JTe.push(s);
+        A.push(new Array(6).fill(0));
+      }
+      for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) {
+        let s = 0; for (let k = 0; k < 3; k++) s += J[k][a] * J[k][b];
+        A[a][b] = s + (a === b ? l2 : 0);
+      }
+      const dq = solve6(A, JTe);
+      for (let i = 0; i < 6; i++) {
+        if (frozen.has(i)) continue;
+        q[i] = Math.min(this.rng[i][1], Math.max(this.rng[i][0],
+                 q[i] + Math.max(-this.maxStep, Math.min(this.maxStep, dq[i]))));
+      }
+      if (Math.hypot(...err) < 1e-4) break;
+    }
+    return q;
+  }
+
+  /** Offset-vensters [min,max] (rad) t.o.v. huidige q, binnen jointlimiet (kleine marge). */
+  rollLimits(q) { const m = 0.02; return [this.rng[5][0] + m - q[5], this.rng[5][1] - m - q[5]]; }  // joint6
+  tiltLimits(q) { const m = 0.02; return [this.rng[4][0] + m - q[4], this.rng[4][1] - m - q[4]]; }  // joint5
+  yawLimits(q)  { const m = 0.02; return [this.rng[3][0] + m - q[3], this.rng[3][1] - m - q[3]]; }  // joint4
   withRoll(q, roll) { if (!roll) return q; const r = q.slice(); r[5] = Math.min(this.rng[5][1], Math.max(this.rng[5][0], q[5] + roll)); return r; }
+  withTilt(q, tilt) { if (!tilt) return q; const r = q.slice(); r[4] = Math.min(this.rng[4][1], Math.max(this.rng[4][0], q[4] + tilt)); return r; }
+  withYaw(q, yaw)   { if (!yaw)  return q; const r = q.slice(); r[3] = Math.min(this.rng[3][1], Math.max(this.rng[3][0], q[3] + yaw));  return r; }
+  /** qIK + yaw→j4 + tilt→j5 + rol→j6 (geklemd). */
+  withWrist(q, roll = 0, tilt = 0, yaw = 0) { return this.withRoll(this.withTilt(this.withYaw(q, yaw), tilt), roll); }
 
   // write arm + gripper targets into ctrl. grip: 0 open .. 1 closed
   apply(q, grip) {
