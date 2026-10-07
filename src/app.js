@@ -5,7 +5,7 @@ import load_mujoco from '../vendor/mujoco/mujoco.js';
 import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from './scene-loader.js';
 import { ArmIK } from './ik.js';
 import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery, tiltAxisFromQuery, yawAxisFromQuery, tiltEnabledFromQuery, yawEnabledFromQuery } from './teleop.js';
-import { mat2quat } from './qmath.js';
+import { mat2quat, rotErr } from './qmath.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 import { parseRecConfig } from './recorder-client.js';
@@ -18,12 +18,12 @@ const DEMO = new URLSearchParams(location.search).get('demo') === '1';
 // Opname (WebSocket-recorder) is alleen actief met ?rec=wss://host/ws#token=... (zie README "Recording client").
 // Zonder ?rec verandert er niets aan de frame-loop (rec-capture.js wordt dan niet geladen; recorder-client.js/rec-state.js zijn klein en zonder bijwerkingen).
 const RECCFG = parseRecConfig();
-// ?debug=1: overlay met per controller handedness/pose/doel (zie src/debug-overlay.js). ?rot=1: controller-oriëntatie (relatief
-// vanaf de clutch) stuurt ook de TCP-oriëntatie aan; standaard blijft de pols-oriëntatie vergrendeld (zoals voorheen).
+// ?debug=1: overlay met per controller handedness/pose/doel + positie-/oriëntatiefout (zie src/debug-overlay.js).
 const _Q = new URLSearchParams(location.search);
 const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _Q.get('headhome') === '1';
-// Oriëntatiemodus (src/teleop.js): standaard 'roll' = yaw→j4 + tilt→j5 + rol→j6; ?rot=1 = volledige 6-DOF-IK;
-// ?rot=0/?roll=0/?orient=0 = pols vergrendeld; ?tilt=0 / ?yaw=0 schakelt assen uit; ?rollaxis=/?tiltaxis=/?yawaxis=.
+// Teleop-modus (src/teleop.js): standaard '6dof' = TCP volgt de volledige relatieve controller-pose (6-DOF-IK over alle joints);
+// ?mode=joints = PR #11 (yaw→j4 + tilt→j5 + rol→j6; ?tilt=0 / ?yaw=0, ?rollaxis=/?tiltaxis=/?yawaxis=);
+// ?orient=0 (of ?rot=0 / ?roll=0) = alleen positie, pols vergrendeld.
 const ORI_MODE = orientationMode(location.search);
 const ROLL_AXIS_Q = rollAxisFromQuery(location.search), TILT_AXIS_Q = tiltAxisFromQuery(location.search), YAW_AXIS_Q = yawAxisFromQuery(location.search);
 const TILT_ON = tiltEnabledFromQuery(location.search), YAW_ON = yawEnabledFromQuery(location.search);
@@ -371,10 +371,13 @@ class SandwichVR {
     const cmds = this._lastCmds || {};
     for (const s of SIDES) {
       const c = cmds[s]; if (!c) { out.ctrl[s] = null; continue; }
-      const t = (this._dbgT || {})[s], tcp = this.tcpPose(s).pos;
+      const t = (this._dbgT || {})[s], tp = this.tcpPose(s), tcp = tp.pos;
       const tgt = t && t.engaged ? t.pos : null;
+      // fout doel ↔ werkelijke TCP (positie in m, oriëntatie in rad) + restfout van de IK-oplossing zelf
+      const errPos = tgt ? Math.hypot(...tgt.map((v, i) => v - tcp[i])) : null;
+      const errRot = tgt && t.quat ? Math.hypot(...rotErr(t.quat, tp.quat)) : null;
       out.ctrl[s] = { world: c.world, mj: [c.pos[0], -c.pos[2], c.pos[1]], grip: c.grip, trigger: c.trigger,
-        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, tilt: t && t.engaged ? t.tilt : 0, yaw: t && t.engaged ? t.yaw : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null };
+        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, tilt: t && t.engaged ? t.tilt : 0, yaw: t && t.engaged ? t.yaw : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null, errPos, errRot, ik: t && t.err ? t.err : null };
     }
     return out;
   }
@@ -404,7 +407,7 @@ class SandwichVR {
         this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
       }
     } else for (const s of SIDES) {
-      const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s));   // rol→j6, tilt→j5 (src/teleop.js)
+      const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s), 3, dt);   // 6-DOF pose-teleop (src/teleop.js)
       if (DEBUG) (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
         this.grip[s] = t.grip;
