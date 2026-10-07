@@ -21,9 +21,12 @@ export const qmul = (a, b) => [
 
 export const qconj = q => [q[0], -q[1], -q[2], -q[3]];
 
-export function qlog(q) {                // unit quat -> rotation vector (3)
-  const w = Math.min(1, Math.max(-1, q[0]));
-  const v = [q[1], q[2], q[3]];
+export function qlog(q) {                // unit quat -> rotation vector (3), KORTSTE weg (|hoek| ≤ π)
+  // q en −q zijn dezelfde rotatie; zonder deze tekenkeuze gaf w < 0 een hoek in (π, 2π) = de LANGE weg om
+  // (bug in het oude ?rot=1-pad: de IK werd dan de verkeerde kant op gestuurd zodra de draai > 180° "leek").
+  const sg = q[0] < 0 ? -1 : 1;
+  const w = Math.min(1, Math.max(-1, sg * q[0]));
+  const v = [sg * q[1], sg * q[2], sg * q[3]];
   const n = Math.hypot(...v);
   if (n < 1e-9) return [0, 0, 0];
   const a = 2 * Math.atan2(n, w);

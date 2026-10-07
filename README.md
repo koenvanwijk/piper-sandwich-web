@@ -191,19 +191,62 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
   teleop path had it missing, so the arms could hardly swing sideways and moved *opposite/mirrored* when you moved sideways. Now always applied.
   Test: `node tools/test-teleop-mapping.mjs` (MuJoCo-wasm, simulated controllers: 10 cm right/left/forward/up/down → TCP moves the same way,
   ≤ 1 mm error; also reproduces the old bug and checks the scene-rotated case).
-- **Orientation (`?rot=1`):** the TCP orientation follows the controller's rotation *relative to the moment the clutch (grip) was pressed*
-  (`HandTeleop`, `lockOrientation: false`). Simulated: a 30° yaw / 25° pitch / 25° roll of the controller rotates the TCP axes to within ~1° of the same
-  world rotation (limited by joint ranges).
-- **Wrist yaw + tilt + roll (default; `?rot=0` / `?roll=0` / `?orient=0` = old fully-locked wrist):** *Cause:* TCP orientation was **locked** by default; `?rot=1` used full 6-DOF DLS-IK which spreads roll over `joint4` and `joint6` (parallel when `joint5 ≈ 0`). Now each controller body-axis twist maps **directly** to one wrist joint (no IK spread), relative to the clutch moment:
-  - **yaw** (grip +y) → `joint4` (±100°, `?yaw=0` off, `?yawaxis=`)
-  - **tilt/pitch** (grip +x) → `joint5` (±70°, `?tilt=0` off, `?tiltaxis=`)
-  - **roll** (grip −z, pointing axis) → `joint6` (±120°, `?rollaxis=`)
-  Safety (all three): dead zone ~1.7°, rate-limited ≤ 0.12 rad/tick (no jumps), clamped to joint limits, kept when grip is released (baked into `qTarget`; new grip re-anchors). Position still follows clutched translation. `?rot=1` = full 6-DOF orientation via IK as before (different path). Code: `src/teleop.js` (`twistAbout`, mode `roll`, `teleopArm`), `ArmIK.withWrist` / `yawLimits`/`tiltLimits`/`rollLimits`. Tests: `tools/test-teleop-mapping.mjs`.
-  *Not tested on a real Quest:* axis feel vs. the tilted Quest handle — use `?rollaxis=`/`?tiltaxis=`/`?yawaxis=` and `?debug=1` (`yaw→j4` / `tilt→j5` / `rol→j6`) to tune.
+- **6-DOF pose teleop (default; `?rot=1` / `?mode=6dof` are the same):** while the grip is held the gripper (TCP) follows the controller's full
+  pose *relative to the clutch moment*: position `p = p0 + Δp_controller`, orientation `R = ΔR_controller(world) · R0`, i.e. the controller's
+  rotation **in the world frame** is applied to the TCP orientation (roll/tilt/yaw of your hand → the same rotation of the gripper about the TCP,
+  the TCP point itself stays put). Solved with a robust 6-DOF IK over all six joints (`ArmIK.solvePose`, `src/ik.js`):
+  weighted damped least squares on [position; 0.1 m/rad · rotation vector], selective singularity damping (eigen-decomposition of JᵀJ, only
+  directions with small σ are damped – wrist singularity `joint5 ≈ 0`), soft null-space bias to the engage posture, active-set joint limits,
+  step limit per iteration, warm start, best iterate kept (unreachable → nearest solution). `teleopArm` then rate-limits the commanded joints
+  to 3.6 rad/s (no jumps) and, near the wrist singularity, tries `joint4 + δ / joint6 − δ` restarts (the only way out of the local minimum there).
+  The anchor at engage is the FK of the *commanded* joints, so pressing the grip never moves the arm.
+  *Why the old `?rot=1` was bad (measured in `tools/test-teleop-mapping.mjs`):* (1) `qlog` did not take the shortest way – with a sign flip of the
+  quaternion (q ≡ −q) an error of 0.01 rad became 6.27 rad, so the IK turned the wrist almost a full turn the wrong way (happens from ~90° hand
+  rotation about some axes, and occasionally in the finite-difference Jacobian through `mat2quat` branch switches); (2) only 3 iterations with up to
+  0.25 rad per iteration and no rate limit → up to 0.5–0.6 rad joint jumps per frame; (3) 1 rad = 1 m weighting and constant damping; no singularity or
+  limit handling. Random reachable poses via a teleop path: old max 514 mm / 104°, new max 0.7 mm / 0.6° (IK) and < 3 mm / < 0.6° actual TCP after the servos.
+  Limits of the Piper wrist (`joint5` ±70°, `joint4` ±100°) mean some orientations are only reachable via another wrist branch; the IK does not
+  flip branches on its own (except at the singularity) and stays at the nearest solution.
+- **`?mode=joints`** (PR #11 per-axis mapping: yaw→`joint4`, tilt→`joint5`, roll→`joint6`, with `?tilt=0` / `?yaw=0` / `?rollaxis=` …) and
+  **`?orient=0`** (or `?rot=0` / `?roll=0`: position only, wrist orientation locked – the oldest behaviour) remain available.
 - **`?debug=1`:** overlay (DOM + head-locked panel in VR) per controller: handedness, profile, world pose, scene-local pose (MuJoCo), clutch,
-  target TCP, actual TCP and Δ. Move a controller 20 cm to the right: `Δ`/`doel` y must go to −0.2 (MuJoCo) and the arm must follow.
+  target TCP, actual TCP and Δ, plus the position/orientation error target↔TCP and the IK residual (mm, °, iterations, λ). Move a controller 20 cm to the right: `Δ`/`doel` y must go to −0.2 (MuJoCo) and the arm must follow.
 - **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
   instead of the fixed −z of the reference space.
+
+- **Target-pose ghost (default on, while clutching):** per arm a light, semi-transparent gripper silhouette + axis cross at the **commanded**
+  6-DOF target pose, and a thin line from the actual TCP to the target. Colour = how well the arm reaches the target
+  (position + orientation error target ↔ actual TCP, smoothed, with hysteresis so it does not flicker):
+  **green** < 8 mm and < 3° · **orange** above that · **red** = not reachable: IK residual > 20 mm or > 10°, or a joint at its limit with a
+  residual, or the arm stays > 20 mm / > 10° away for > 0.4 s (e.g. blocked by the table). A short lag while moving fast is only orange.
+  Back to a better colour only below 0.7 × the threshold; a new colour must hold for 0.12 s. On the transition to red a short, weak
+  haptic pulse (≤ 1× per 1.5 s). In `joints`/`orient=0` mode only the position counts (the ghost then takes the actual TCP orientation).
+  Options: `?target=0` off · `?target=always` (also without clutch, at the actual TCP) · `?tgtok=8,3` / `?tgtbad=20,10` (mm,°) · `?tgthaptic=0`.
+  Cost: 3 draw calls per arm, `MeshBasicMaterial`/`LineBasicMaterial`, geometry shared between the arms (`src/target-viz.js`). The 2–3 mm static
+  sag of the position servos under gravity stays green (that is why green is 8 mm, not 5). Not in `table-ar/` (no teleop there).
+
+### In-VR feature flags (menu)
+
+Typing URLs in the headset is painful, so the main options are switchable **inside the VR session**:
+
+- **Open:** a small round **MENU** button floats just above the **left controller**. Point the **right** controller's ray at it (the ray appears
+  when you get close) and pull the **trigger**. Desktop: button **⚙ Flags** (top right) or key **M**, click rows with the mouse.
+- **Use:** point a ray (either hand) at a row and pull the trigger: the value cycles. **Reset** clears the saved choices; **Sluiten** (or MENU again) closes.
+  The panel opens 0.6 m in front of you, fixed in the world. Every click gives a tiny haptic tick.
+- **Flags:** teleop mode (`6-DOF pose` → `joints j4/j5/j6` → `alleen positie`; = `?mode=` / `?orient=0`), target ghost (`tijdens clutch` → `altijd` →
+  `uit`; = `?target=`), haptic pulse on red (`?tgthaptic=`), debug overlay (`?debug=1`), tilt→j5 / yaw→j4 in joints mode (`?tilt=0` / `?yaw=0`),
+  head-based home (`?headhome=1`). Changing mode/tilt/yaw releases the clutch; the next grip takes a new anchor.
+- **Start value:** URL parameter (if present) > choice saved in VR (`localStorage`, key `piper-sandwich-web.flags.v1`) > default. A flag that is
+  in the URL therefore wins again on reload (the menu shows the source: URL / VR / bewaard / std). Existing links behave exactly as before.
+- **No button conflicts:** the menu uses **only the trigger**, and only from a hand that is **not clutching** (the trigger is the gripper only
+  while the grip is held; a trigger still held when you release the grip does not click). A/B/X/Y (recording or recenter), thumbstick press
+  (recenter with `?rec`), grip and thumbsticks are untouched. (The Quest's own menu button is not available to WebXR pages.)
+  The menu, the MENU button and the rays are hidden in recorded camera frames.
+- Not in the menu: things that only apply at page load (`?rec=`, `?demo=1`, `?rollaxis=` …) and the AR page (`table-ar/`: its perf options like
+  `?aa`/`?lod`/`?mat` are load-time; it has no teleop).
+- Tests: `node tools/test-flags.mjs` (flag state, URL equivalence with the old parsers, persistence, URL precedence, reset, broken storage,
+  trigger click detection, no button conflicts); `tools/test-flag-menu-chrome.mjs` (headless Chrome: open, click, live effect, reload, URL wins,
+  reset, simulated VR controllers on the MENU button).
 
 ## AR performance (`table-ar/`, "AR is too slow")
 
@@ -315,6 +358,8 @@ index.html            importmap (three from CDN) + entry
 src/app.js            init WASM, load scene, render/control loop, three.js WebXR
 src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
+src/target-viz.js     target-pose ghost + green/orange/red status (hysteresis)
+src/flags.js          in-VR feature flags (URL > localStorage > default), src/flag-menu.js the in-VR menu
 src/qmath.js          quaternion helpers
 src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless)
 src/tag-surface.js    AprilTag → table surface geometry (pose history, tracker, rectangle, scanner), src/tag-surface-view.js preview, src/tag-debug.js ?debug=1 overlay
@@ -341,8 +386,8 @@ vendor/mujoco/        official MuJoCo WASM engine (mujoco.js + mujoco.wasm)
 
 ## Known limitations & next steps
 
-- Wrist orientation is **locked** by default (arm keeps the engage-time pose). `?rot=1` maps the controller's rotation
-  *relative to the clutch moment* onto the TCP (see "Controller mapping" below). Not yet tried on a real Quest.
+- The gripper follows the full 6-DOF controller pose *relative to the clutch moment* (see "Controller mapping" below); `?orient=0` = position only.
+  Not yet tried on a real Quest.
 - **Grasping** small props needs fingertip collision tuning (same as the Python
   sim); good next step for actually assembling the sandwich.
 - **Butter is spreadable**: a heap of many small high-friction pats the knife
