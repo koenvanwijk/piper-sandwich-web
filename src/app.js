@@ -4,9 +4,11 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 import load_mujoco from '../vendor/mujoco/mujoco.js';
 import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from './scene-loader.js';
 import { ArmIK } from './ik.js';
-import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery, tiltAxisFromQuery, yawAxisFromQuery, tiltEnabledFromQuery, yawEnabledFromQuery } from './teleop.js';
+import { HandTeleop, teleopArm, rollAxisFromQuery, tiltAxisFromQuery, yawAxisFromQuery } from './teleop.js';
 import { mat2quat, rotErr } from './qmath.js';
 import { parseTargetOpts, TargetStatus, createTargetGhosts } from './target-viz.js';
+import { FeatureFlags, safeStorage } from './flags.js';
+import { createFlagMenu } from './flag-menu.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 import { parseRecConfig } from './recorder-client.js';
@@ -20,17 +22,17 @@ const DEMO = new URLSearchParams(location.search).get('demo') === '1';
 // Zonder ?rec verandert er niets aan de frame-loop (rec-capture.js wordt dan niet geladen; recorder-client.js/rec-state.js zijn klein en zonder bijwerkingen).
 const RECCFG = parseRecConfig();
 // ?debug=1: overlay met per controller handedness/pose/doel + positie-/oriëntatiefout (zie src/debug-overlay.js).
-const _Q = new URLSearchParams(location.search);
-const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _Q.get('headhome') === '1';
+// In-VR feature flags (src/flags.js + menu src/flag-menu.js): mode, target, haptic, debug, tilt, yaw, headhome. De query-parameters hieronder
+// blijven de startwaarde (URL > in VR bewaarde keuze (localStorage) > standaard); in het menu (MENU-knop op de linker controller) live te wijzigen.
+const FLAGS = new FeatureFlags({ search: location.search, storage: safeStorage() });
+const DEBUG_ON = () => FLAGS.get('debug');
 // Teleop-modus (src/teleop.js): standaard '6dof' = TCP volgt de volledige relatieve controller-pose (6-DOF-IK over alle joints);
 // ?mode=joints = PR #11 (yaw→j4 + tilt→j5 + rol→j6; ?tilt=0 / ?yaw=0, ?rollaxis=/?tiltaxis=/?yawaxis=);
 // ?orient=0 (of ?rot=0 / ?roll=0) = alleen positie, pols vergrendeld.
-const ORI_MODE = orientationMode(location.search);
 const ROLL_AXIS_Q = rollAxisFromQuery(location.search), TILT_AXIS_Q = tiltAxisFromQuery(location.search), YAW_AXIS_Q = yawAxisFromQuery(location.search);
-const TILT_ON = tiltEnabledFromQuery(location.search), YAW_ON = yawEnabledFromQuery(location.search);
 // Doel-ghost per arm (src/target-viz.js): standaard tijdens clutch; ?target=0 uit, ?target=always, ?tgtok=8,3 / ?tgtbad=20,10 (mm,°), ?tgthaptic=0.
 const TARGET = parseTargetOpts(location.search);
-const newTeleop = () => new HandTeleop({ mode: ORI_MODE, rollAxis: ROLL_AXIS_Q, tiltAxis: TILT_AXIS_Q, yawAxis: YAW_AXIS_Q, tilt: TILT_ON, yaw: YAW_ON });
+const newTeleop = () => new HandTeleop({ mode: FLAGS.get('mode'), rollAxis: ROLL_AXIS_Q, tiltAxis: TILT_AXIS_Q, yawAxis: YAW_AXIS_Q, tilt: FLAGS.get('tilt'), yaw: FLAGS.get('yaw') });
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
 
@@ -136,18 +138,87 @@ class SandwichVR {
       this._mocap[s] = this.model.body_mocapid[bid];
     }
 
-    if (TARGET.mode !== 'off') {
-      this._ghost = createTargetGhosts({ THREE, parent: this.mujocoRoot, sides: SIDES });
-      this._tstat = {}; this._tinfo = {}; this._badPulseT = {};
-      for (const s of SIDES) this._tstat[s] = new TargetStatus(TARGET);
-    }
+    if (FLAGS.get('target') !== 'off') this.ensureGhost();
     if (DEMO) this.initDemo();
     if (RECCFG) await this.initRec();
-    if (DEBUG) { const { createDebugOverlay } = await import('./debug-overlay.js'); this._dbg = createDebugOverlay({ THREE, camera: this.camera }); }
+    if (FLAGS.get('debug')) await this.ensureDebug();
+    this.initFlagMenu();
 
     this.renderer.setAnimationLoop(() => this.frame());
     setStatus(DEMO ? 'Demo: ' + this.demo.stepName
                    : 'Ready — press "Enter VR". Hold grip = clutch, trigger = gripper.');
+  }
+
+  // Doel-ghost pas aanmaken als hij aan staat (?target=0 = niets extra in de scène; in het menu later aan te zetten).
+  ensureGhost() {
+    if (this._ghost) return;
+    this._ghost = createTargetGhosts({ THREE, parent: this.mujocoRoot, sides: SIDES });
+    this._tstat = {}; this._tinfo = {}; this._badPulseT = {};
+    for (const s of SIDES) this._tstat[s] = new TargetStatus(TARGET);
+  }
+  async ensureDebug() {
+    if (!this._dbg) { const { createDebugOverlay } = await import('./debug-overlay.js'); this._dbg = createDebugOverlay({ THREE, camera: this.camera }); }
+    this._dbg.el.style.display = FLAGS.get('debug') ? '' : 'none'; this._dbg.mesh.visible = !!FLAGS.get('debug');
+  }
+
+  // In-VR menu (src/flag-menu.js). Wijzigingen gelden meteen: modus/tilt/yaw → clutch los + nieuw anker bij de volgende grip.
+  initFlagMenu() {
+    this.flags = FLAGS;
+    this._menu = createFlagMenu({ THREE, scene: this.scene, flags: FLAGS, onAction: key => {
+      if (key !== '_close') this.haptic(null, 0.15, 15, 1);
+    } });
+    FLAGS.onChange((k, v) => this.applyFlag(k, v));
+    const head = () => { const c = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera; c.updateMatrixWorld(true);
+      const p = new THREE.Vector3(), q = new THREE.Quaternion(); c.matrixWorld.decompose(p, q, new THREE.Vector3()); return { p, q }; };
+    this._menuToggle = () => { const h = head(); this._menu.toggle(h.p, h.q); };
+    // desktop: knop + toets M + muisklik op het paneel
+    const btn = document.createElement('button');
+    btn.id = 'flags-btn'; btn.textContent = '⚙ Flags (M)';
+    btn.style.cssText = 'position:fixed;top:12px;right:12px;z-index:11;background:rgba(0,0,0,.6);color:#e6edf3;border:1px solid #3d8bfd;border-radius:8px;padding:6px 10px;font:13px system-ui;cursor:pointer';
+    btn.onclick = () => this._menuToggle(); document.body.appendChild(btn);
+    addEventListener('keydown', e => { if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && String(e.key).toLowerCase() === 'm' && !/INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) this._menuToggle(); });
+    const el = this.renderer.domElement; let down = null;
+    el.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+    el.addEventListener('pointerup', e => {
+      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || !this._menu.isOpen) return;
+      const r = el.getBoundingClientRect(), rc = new THREE.Raycaster();
+      rc.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.camera);
+      this._menu.clickRay(rc.ray.origin, rc.ray.direction);
+    });
+  }
+  applyFlag(k, v) {
+    if (k === 'mode' || k === 'tilt' || k === 'yaw') {
+      for (const s of SIDES) { this.teleop[s] = newTeleop(); this.qIK[s] = null; if (this._tstat) this._tstat[s].reset(); }
+    } else if (k === 'target') {
+      if (v !== 'off') this.ensureGhost(); else if (this._ghost) this._ghost.hideAll();
+    } else if (k === 'debug') {
+      this.ensureDebug();
+    } else if (k === 'headhome') {
+      this._xrHomed = false;
+    }
+  }
+  // Stralen + grip-pose (wereld) per hand voor het menu. Alleen in een XR-sessie.
+  readPointers() {
+    const session = this.renderer.xr.getSession(), frame = this.renderer.xr.getFrame(), ref = this.renderer.xr.getReferenceSpace();
+    const out = {}; if (!session || !frame || !ref) return out;
+    for (const src of session.inputSources) {
+      const h = src.handedness; if (h !== 'left' && h !== 'right' || !src.targetRaySpace) continue;
+      const rp = frame.getPose(src.targetRaySpace, ref); if (!rp) continue;
+      const t = rp.transform, q = new THREE.Quaternion(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+      const c = { origin: new THREE.Vector3(t.position.x, t.position.y, t.position.z), dir: new THREE.Vector3(0, 0, -1).applyQuaternion(q),
+        trigger: src.gamepad && src.gamepad.buttons[0] ? src.gamepad.buttons[0].value : 0, engaged: !!(this.teleop[h] && this.teleop[h].engaged) };
+      const gp = src.gripSpace && frame.getPose(src.gripSpace, ref);
+      if (gp) { const o = gp.transform.orientation, p = gp.transform.position; c.gripPos = new THREE.Vector3(p.x, p.y, p.z); c.gripQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w); }
+      out[h] = c;
+    }
+    return out;
+  }
+  updateMenu() {
+    if (!this._menu) return;
+    if (!this.renderer.xr.isPresenting) { this._menu.gear.visible = false; return; }
+    const cam = this.renderer.xr.getCamera(); cam.updateMatrixWorld(true);
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(); cam.matrixWorld.decompose(p, q, new THREE.Vector3());
+    this._menu.update(this.readPointers(), { pos: p, quat: q });
   }
 
   // Demo "broodje smeren" (src/sandwich-motion.js). Alleen aangeroepen bij ?demo=1.
@@ -228,7 +299,7 @@ class SandwichVR {
     addEventListener('keydown', e => { const a = keyAction(e); if (a) { ctl.act(a, null); e.preventDefault(); } });
     const hint = document.getElementById('hint');
     if (hint) hint.innerHTML = 'Grip = clutch · Trigger = gripper &nbsp;|&nbsp; <b>REC</b>: A = start/stop+bewaar · B = weggooien+reset · ' +
-      'X = geslaagd (+stop) · Y = reset scene · stick-klik = recenter &nbsp;|&nbsp; toetsen: S · D · K · R';
+      'X = geslaagd (+stop) · Y = reset scene · stick-klik = recenter · MENU-knop (links) = flags &nbsp;|&nbsp; toetsen: S · D · K · R · M';
     client.start();
   }
 
@@ -283,8 +354,10 @@ class SandwichVR {
       objects: obs.objects, xr: this.renderer.xr.isPresenting, demo_step: this.demo ? this.demo.index : null });
     if (r.capture && r.client.wantFrames()) {
       this.syncScene();
-      r.hud.mesh.visible = false;               // het 3D-HUD hoort niet in de opgenomen camerabeelden
-      try { r.capture.grab((camId, ab) => r.client.sendFrame(seq, camId, ab)); } finally { r.hud.mesh.visible = true; }
+      r.hud.mesh.visible = false;               // het 3D-HUD (en het flag-menu, de MENU-knop en stralen) horen niet in de opgenomen camerabeelden
+      const m = this._menu, mv = m ? [m.panel, m.gear, m.rays.left, m.rays.right].map(o => [o, o.visible]) : [];
+      for (const [o] of mv) o.visible = false;
+      try { r.capture.grab((camId, ab) => r.client.sendFrame(seq, camId, ab)); } finally { r.hud.mesh.visible = true; for (const [o, v] of mv) o.visible = v; }
     }
     return anyEngaged;
   }
@@ -318,7 +391,7 @@ class SandwichVR {
       const btn = i => (gp && gp.buttons[i]) ? gp.buttons[i].value : 0;
       const raw = { pos: [lp.x, lp.y, lp.z], quat: [lq.w, lq.x, lq.y, lq.z],
                     trigger: btn(0), grip: btn(1) };
-      if (DEBUG) raw.world = [p.x, p.y, p.z];
+      if (DEBUG_ON()) raw.world = [p.x, p.y, p.z];
       if (this.rec && gp) { raw.buttons = gp.buttons.map(b => +b.value.toFixed(3)); raw.axes = Array.from(gp.axes); }
       if (src.handedness === 'left') out.left = raw;
       else if (src.handedness === 'right') out.right = raw;
@@ -353,7 +426,7 @@ class SandwichVR {
   // starten van de sessie een andere kant op, dan zit u niet "tussen de armen, kijkend naar het bord". Met ?headhome=1 wordt de thuispositie bij
   // sessiestart en bij elke recenter uit hoofdpositie + kijkrichting (yaw) berekend (xr-map.js). Standaard en buiten VR ongewijzigd.
   homeToHead(nav) {
-    if (!HEADHOME) return;
+    if (!FLAGS.get('headhome')) return;
     if (!this.renderer.xr.isPresenting) { this._xrHomed = false; return; }
     if (this._xrHomed && !nav.reset) return;
     const cam = this.renderer.xr.getCamera(); cam.updateMatrixWorld(true);
@@ -368,7 +441,7 @@ class SandwichVR {
   }
 
   debugInfo() {
-    const out = { xr: this.renderer.xr.isPresenting, rot: ORI_MODE, rootRotY: this.mujocoRoot.rotation.y, headYaw: null, refSpace: null, sources: [], ctrl: {} };
+    const out = { xr: this.renderer.xr.isPresenting, rot: FLAGS.get('mode'), rootRotY: this.mujocoRoot.rotation.y, headYaw: null, refSpace: null, sources: [], ctrl: {} };
     const session = this.renderer.xr.getSession();
     if (session) {
       out.refSpace = this.renderer.xr.getReferenceSpace() ? 'local-floor (ingesteld in app.js)' : null;
@@ -407,7 +480,7 @@ class SandwichVR {
   // Doel-ghost + kleurstatus (src/target-viz.js). Alleen in 6dof-modus telt de oriëntatie mee (in joints/lock is het doel
   // positie-only; de ghost neemt dan de oriëntatie van de echte TCP over). Haptiek: korte zwakke puls bij overgang naar rood (≤ 1×/1,5 s).
   updateTargetGhost(s, t, dt) {
-    if (!this._ghost) return;
+    if (!this._ghost || FLAGS.get('target') === 'off') return;
     const tp = this.tcpPose(s), six = this.teleop[s].mode === '6dof';
     if (t.engaged) {
       const posErr = Math.hypot(...t.pos.map((v, i) => v - tp.pos[i]));
@@ -417,10 +490,10 @@ class SandwichVR {
       this._tinfo[s] = st;
       this._ghost.update(s, { visible: true, pos: t.pos, quat: six ? t.quat : tp.quat, tcpPos: tp.pos, status: st.status });
       const now = performance.now();
-      if (st.enteredBad && TARGET.haptic && now - (this._badPulseT[s] || -1e9) > 1500) { this._badPulseT[s] = now; this.haptic(s, 0.25, 35, 1); }
+      if (st.enteredBad && FLAGS.get('haptic') && now - (this._badPulseT[s] || -1e9) > 1500) { this._badPulseT[s] = now; this.haptic(s, 0.25, 35, 1); }
     } else {
       this._tstat[s].reset(); this._tinfo[s] = null;
-      this._ghost.update(s, { visible: TARGET.mode === 'always', pos: tp.pos, quat: tp.quat, tcpPos: tp.pos, status: 'ok' });
+      this._ghost.update(s, { visible: FLAGS.get('target') === 'always', pos: tp.pos, quat: tp.quat, tcpPos: tp.pos, status: 'ok' });
     }
   }
 
@@ -437,7 +510,7 @@ class SandwichVR {
       if (this._ghost) this._ghost.hideAll();
     } else for (const s of SIDES) {
       const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s), 3, dt);   // 6-DOF pose-teleop (src/teleop.js)
-      if (DEBUG) (this._dbgT ||= {})[s] = t;
+      (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
         this.grip[s] = t.grip;
         if (this._mocap[s] >= 0) {
@@ -482,7 +555,8 @@ class SandwichVR {
     this.applyNav(nav, frameDt);
 
     const cmds = this.readControllers();
-    if (DEBUG) this._lastCmds = cmds;
+    this._lastCmds = cmds;
+    this.updateMenu();
     if (this.rec) {
       this.pollRecButtons();
       if (this.rec.ctl.state === 'RECORDING' && now - (this._hudT || 0) > 0.1) { this._hudT = now; this.rec.hud.update(this.rec.ctl.snapshot()); }
@@ -501,7 +575,7 @@ class SandwichVR {
     }
 
     this.syncScene();
-    if (this._dbg) this._dbg.update(this.debugInfo());
+    if (this._dbg && FLAGS.get('debug')) this._dbg.update(this.debugInfo());
 
     if (!this.renderer.xr.isPresenting) this.controls.update();
     this.renderer.render(this.scene, this.camera);

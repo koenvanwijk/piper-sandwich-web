@@ -214,6 +214,40 @@ Met `?rec=` (en een draaiende `server/`) start en stopt u opnames zonder toetsen
 - **`?headhome=1` (experimental):** on session start and on recenter, place the workspace in front of where the head actually looks (yaw),
   instead of the fixed −z of the reference space.
 
+- **Target-pose ghost (default on, while clutching):** per arm a light, semi-transparent gripper silhouette + axis cross at the **commanded**
+  6-DOF target pose, and a thin line from the actual TCP to the target. Colour = how well the arm reaches the target
+  (position + orientation error target ↔ actual TCP, smoothed, with hysteresis so it does not flicker):
+  **green** < 8 mm and < 3° · **orange** above that · **red** = not reachable: IK residual > 20 mm or > 10°, or a joint at its limit with a
+  residual, or the arm stays > 20 mm / > 10° away for > 0.4 s (e.g. blocked by the table). A short lag while moving fast is only orange.
+  Back to a better colour only below 0.7 × the threshold; a new colour must hold for 0.12 s. On the transition to red a short, weak
+  haptic pulse (≤ 1× per 1.5 s). In `joints`/`orient=0` mode only the position counts (the ghost then takes the actual TCP orientation).
+  Options: `?target=0` off · `?target=always` (also without clutch, at the actual TCP) · `?tgtok=8,3` / `?tgtbad=20,10` (mm,°) · `?tgthaptic=0`.
+  Cost: 3 draw calls per arm, `MeshBasicMaterial`/`LineBasicMaterial`, geometry shared between the arms (`src/target-viz.js`). The 2–3 mm static
+  sag of the position servos under gravity stays green (that is why green is 8 mm, not 5). Not in `table-ar/` (no teleop there).
+
+### In-VR feature flags (menu)
+
+Typing URLs in the headset is painful, so the main options are switchable **inside the VR session**:
+
+- **Open:** a small round **MENU** button floats just above the **left controller**. Point the **right** controller's ray at it (the ray appears
+  when you get close) and pull the **trigger**. Desktop: button **⚙ Flags** (top right) or key **M**, click rows with the mouse.
+- **Use:** point a ray (either hand) at a row and pull the trigger: the value cycles. **Reset** clears the saved choices; **Sluiten** (or MENU again) closes.
+  The panel opens 0.6 m in front of you, fixed in the world. Every click gives a tiny haptic tick.
+- **Flags:** teleop mode (`6-DOF pose` → `joints j4/j5/j6` → `alleen positie`; = `?mode=` / `?orient=0`), target ghost (`tijdens clutch` → `altijd` →
+  `uit`; = `?target=`), haptic pulse on red (`?tgthaptic=`), debug overlay (`?debug=1`), tilt→j5 / yaw→j4 in joints mode (`?tilt=0` / `?yaw=0`),
+  head-based home (`?headhome=1`). Changing mode/tilt/yaw releases the clutch; the next grip takes a new anchor.
+- **Start value:** URL parameter (if present) > choice saved in VR (`localStorage`, key `piper-sandwich-web.flags.v1`) > default. A flag that is
+  in the URL therefore wins again on reload (the menu shows the source: URL / VR / bewaard / std). Existing links behave exactly as before.
+- **No button conflicts:** the menu uses **only the trigger**, and only from a hand that is **not clutching** (the trigger is the gripper only
+  while the grip is held; a trigger still held when you release the grip does not click). A/B/X/Y (recording or recenter), thumbstick press
+  (recenter with `?rec`), grip and thumbsticks are untouched. (The Quest's own menu button is not available to WebXR pages.)
+  The menu, the MENU button and the rays are hidden in recorded camera frames.
+- Not in the menu: things that only apply at page load (`?rec=`, `?demo=1`, `?rollaxis=` …) and the AR page (`table-ar/`: its perf options like
+  `?aa`/`?lod`/`?mat` are load-time; it has no teleop).
+- Tests: `node tools/test-flags.mjs` (flag state, URL equivalence with the old parsers, persistence, URL precedence, reset, broken storage,
+  trigger click detection, no button conflicts); `tools/test-flag-menu-chrome.mjs` (headless Chrome: open, click, live effect, reload, URL wins,
+  reset, simulated VR controllers on the MENU button).
+
 ## AR performance (`table-ar/`, "AR is too slow")
 
 Findings (headless analysis, **not measured on a Quest**): the AR page does **not** run MuJoCo physics (the cell is static, `syncBodies()` runs once), so the cost is rendering + main-thread work:
@@ -324,6 +358,8 @@ index.html            importmap (three from CDN) + entry
 src/app.js            init WASM, load scene, render/control loop, three.js WebXR
 src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
+src/target-viz.js     target-pose ghost + green/orange/red status (hysteresis)
+src/flags.js          in-VR feature flags (URL > localStorage > default), src/flag-menu.js the in-VR menu
 src/qmath.js          quaternion helpers
 src/sandwich-motion.js  demo-choreografie + MotionPlayer (DOM-vrij, ook headless)
 src/tag-surface.js    AprilTag → table surface geometry (pose history, tracker, rectangle, scanner), src/tag-surface-view.js preview, src/tag-debug.js ?debug=1 overlay
