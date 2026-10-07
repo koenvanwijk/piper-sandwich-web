@@ -181,7 +181,8 @@ export function teleopArm(st, side, teleop, ik, raw, tcp, iters = 3, dt = 1 / 30
     const q = sol.map((v, i) => prev[i] + Math.max(-maxd, Math.min(maxd, v - prev[i])));
     st.qIK[side] = sol;          // IK-keten (warm start, behoudt de gekozen tak) — niet begrensd
     st.qTarget[side] = q;        // gecommandeerd: volgt de IK-oplossing met max JOINT_SPEED
-    t.err = { pos: stats.pos, rot: stats.rot, iters: stats.iters, lambda: stats.lambda };
+    const atLimit = sol.some((v, i) => v <= ik.rng[i][0] + 1e-3 || v >= ik.rng[i][1] - 1e-3);   // IK-oplossing tegen een jointlimiet
+    t.err = { pos: stats.pos, rot: stats.rot, iters: stats.iters, lambda: stats.lambda, atLimit };
     return t;
   }
   const t = teleop.step(raw, tcp, {

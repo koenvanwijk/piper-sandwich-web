@@ -15,7 +15,8 @@ export function formatDebug(d) {
     L.push(`  wereld ${f(c.world)}  scène-lokaal(mj) ${f(c.mj)}`);
     L.push(`  doel(mj) ${f(c.target)}  tcp(mj) ${f(c.tcp)}  Δdoel ${f(c.delta)}`);
     if (c.errPos != null) L.push(`  fout doel↔TCP: ${(c.errPos * 1000).toFixed(1)} mm  ${((c.errRot || 0) * 180 / Math.PI).toFixed(1)}°` +
-      (c.ik ? `   IK-rest: ${(c.ik.pos * 1000).toFixed(1)} mm ${(c.ik.rot * 180 / Math.PI).toFixed(1)}° (${c.ik.iters} it, λ ${c.ik.lambda.toFixed(3)})` : ''));
+      (c.ik ? `   IK-rest: ${(c.ik.pos * 1000).toFixed(1)} mm ${(c.ik.rot * 180 / Math.PI).toFixed(1)}° (${c.ik.iters} it, λ ${c.ik.lambda.toFixed(3)}${c.ik.atLimit ? ', LIMIET' : ''})` : '') +
+      (c.tstat ? `   doel: ${{ ok: 'GROEN', warn: 'ORANJE', bad: 'ROOD' }[c.tstat.status]}` : ''));
   }
   L.push('as-conventie: gebruiker-rechts = mj −y · vooruit = mj +x · omhoog = mj +z');
   return L;

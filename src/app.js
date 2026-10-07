@@ -6,6 +6,7 @@ import { loadSceneFromURL, getPosition, getQuaternion, drawTendonsAndFlex } from
 import { ArmIK } from './ik.js';
 import { HandTeleop, teleopArm, orientationMode, rollAxisFromQuery, tiltAxisFromQuery, yawAxisFromQuery, tiltEnabledFromQuery, yawEnabledFromQuery } from './teleop.js';
 import { mat2quat, rotErr } from './qmath.js';
+import { parseTargetOpts, TargetStatus, createTargetGhosts } from './target-viz.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 import { parseRecConfig } from './recorder-client.js';
@@ -27,6 +28,8 @@ const DEBUG = _Q.get('debug') === '1', ROT = _Q.get('rot') === '1', HEADHOME = _
 const ORI_MODE = orientationMode(location.search);
 const ROLL_AXIS_Q = rollAxisFromQuery(location.search), TILT_AXIS_Q = tiltAxisFromQuery(location.search), YAW_AXIS_Q = yawAxisFromQuery(location.search);
 const TILT_ON = tiltEnabledFromQuery(location.search), YAW_ON = yawEnabledFromQuery(location.search);
+// Doel-ghost per arm (src/target-viz.js): standaard tijdens clutch; ?target=0 uit, ?target=always, ?tgtok=8,3 / ?tgtbad=20,10 (mm,°), ?tgthaptic=0.
+const TARGET = parseTargetOpts(location.search);
 const newTeleop = () => new HandTeleop({ mode: ORI_MODE, rollAxis: ROLL_AXIS_Q, tiltAxis: TILT_AXIS_Q, yawAxis: YAW_AXIS_Q, tilt: TILT_ON, yaw: YAW_ON });
 const MESHES = ['base_link', 'link1', 'link2', 'link3', 'link4', 'link5',
                 'link6', 'gripper_base', 'link7', 'link8'].map(n => n + '.STL');
@@ -133,6 +136,11 @@ class SandwichVR {
       this._mocap[s] = this.model.body_mocapid[bid];
     }
 
+    if (TARGET.mode !== 'off') {
+      this._ghost = createTargetGhosts({ THREE, parent: this.mujocoRoot, sides: SIDES });
+      this._tstat = {}; this._tinfo = {}; this._badPulseT = {};
+      for (const s of SIDES) this._tstat[s] = new TargetStatus(TARGET);
+    }
     if (DEMO) this.initDemo();
     if (RECCFG) await this.initRec();
     if (DEBUG) { const { createDebugOverlay } = await import('./debug-overlay.js'); this._dbg = createDebugOverlay({ THREE, camera: this.camera }); }
@@ -377,7 +385,7 @@ class SandwichVR {
       const errPos = tgt ? Math.hypot(...tgt.map((v, i) => v - tcp[i])) : null;
       const errRot = tgt && t.quat ? Math.hypot(...rotErr(t.quat, tp.quat)) : null;
       out.ctrl[s] = { world: c.world, mj: [c.pos[0], -c.pos[2], c.pos[1]], grip: c.grip, trigger: c.trigger,
-        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, tilt: t && t.engaged ? t.tilt : 0, yaw: t && t.engaged ? t.yaw : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null, errPos, errRot, ik: t && t.err ? t.err : null };
+        engaged: this.teleop[s].engaged, roll: t && t.engaged ? t.roll : 0, tilt: t && t.engaged ? t.tilt : 0, yaw: t && t.engaged ? t.yaw : 0, target: tgt, tcp, delta: tgt ? tgt.map((v, i) => v - tcp[i]) : null, errPos, errRot, ik: t && t.err ? t.err : null, tstat: (this._tinfo || {})[s] || null };
     }
     return out;
   }
@@ -396,6 +404,26 @@ class SandwichVR {
     r.updateMatrixWorld(true);
   }
 
+  // Doel-ghost + kleurstatus (src/target-viz.js). Alleen in 6dof-modus telt de oriëntatie mee (in joints/lock is het doel
+  // positie-only; de ghost neemt dan de oriëntatie van de echte TCP over). Haptiek: korte zwakke puls bij overgang naar rood (≤ 1×/1,5 s).
+  updateTargetGhost(s, t, dt) {
+    if (!this._ghost) return;
+    const tp = this.tcpPose(s), six = this.teleop[s].mode === '6dof';
+    if (t.engaged) {
+      const posErr = Math.hypot(...t.pos.map((v, i) => v - tp.pos[i]));
+      const rotE = six ? Math.hypot(...rotErr(t.quat, tp.quat)) : 0;
+      const e = t.err || {};
+      const st = this._tstat[s].update({ posErr, rotErr: rotE, ikPos: e.pos || 0, ikRot: six ? (e.rot || 0) : 0, atLimit: !!e.atLimit }, dt);
+      this._tinfo[s] = st;
+      this._ghost.update(s, { visible: true, pos: t.pos, quat: six ? t.quat : tp.quat, tcpPos: tp.pos, status: st.status });
+      const now = performance.now();
+      if (st.enteredBad && TARGET.haptic && now - (this._badPulseT[s] || -1e9) > 1500) { this._badPulseT[s] = now; this.haptic(s, 0.25, 35, 1); }
+    } else {
+      this._tstat[s].reset(); this._tinfo[s] = null;
+      this._ghost.update(s, { visible: TARGET.mode === 'always', pos: tp.pos, quat: tp.quat, tcpPos: tp.pos, status: 'ok' });
+    }
+  }
+
   // Arm-aansturing voor één stap van `dt` seconden: demo of teleop -> IK -> ctrl. Geeft terug of een arm 'engaged' is.
   control(cmds, dt) {
     let anyEngaged = false;
@@ -406,6 +434,7 @@ class SandwichVR {
         const a = this._mocap[s] * 3, p = this.demo.cmd[s].pos;
         this.data.mocap_pos[a] = p[0]; this.data.mocap_pos[a+1] = p[1]; this.data.mocap_pos[a+2] = p[2];
       }
+      if (this._ghost) this._ghost.hideAll();
     } else for (const s of SIDES) {
       const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s), 3, dt);   // 6-DOF pose-teleop (src/teleop.js)
       if (DEBUG) (this._dbgT ||= {})[s] = t;
@@ -419,6 +448,7 @@ class SandwichVR {
         }
         anyEngaged = true;
       }
+      this.updateTargetGhost(s, t, dt);
       this.ik[s].apply(this.qTarget[s], this.grip[s]);
     }
     return anyEngaged;
