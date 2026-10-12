@@ -358,6 +358,7 @@ index.html            importmap (three from CDN) + entry
 src/app.js            init WASM, load scene, render/control loop, three.js WebXR
 src/ik.js             finite-difference DLS IK per arm
 src/teleop.js         clutch + three→MuJoCo mapping
+src/butter-spread.js  spreadable butter (layer on bread0 + taking up pats), ?spread=0 off
 src/target-viz.js     target-pose ghost + green/orange/red status (hysteresis)
 src/flags.js          in-VR feature flags (URL > localStorage > default), src/flag-menu.js the in-VR menu
 src/qmath.js          quaternion helpers
@@ -390,11 +391,20 @@ vendor/mujoco/        official MuJoCo WASM engine (mujoco.js + mujoco.wasm)
   Not yet tried on a real Quest.
 - **Grasping** small props needs fingertip collision tuning (same as the Python
   sim); good next step for actually assembling the sandwich.
-- **Butter is spreadable**: a heap of many small high-friction pats the knife
-  pushes and smears across the bread. (A true elastic soft body would need
-  MuJoCo's `elasticity.solid` flex plugin, which this WASM build does not expose
-  for registration — and 100+ flex DoF would strain VR framerates anyway — so a
-  granular heap is the robust, real-time choice, and reads well as spreading.)
+- **Butter is spreadable** (`src/butter-spread.js`, `?spread=0` = old behaviour): the 14 pats are now *slippery and soft*
+  (friction 0.3, condim 3, soft contact) instead of sticky (friction 2.5), so the knife pushes them apart. When the blade presses on
+  a pat (blade underside ≤ 4 mm above its top) the pat is "taken up" (removed from collisions, parked under the table) and its volume
+  becomes supply on the blade; a moving blade with supply ≤ 6 mm above bread0 paints a butter layer (30 × 30 grid in bread0 coordinates,
+  DataTexture on a plane on the bread). Mass is conserved (one pat ≈ 6 cm²). Cost ≈ 0.05 ms/frame, 1 extra draw call.
+  Demo: covered bread area 29 % (old: pats only) → 83 % (11/14 pats spread). *Alternatives considered:* MuJoCo flex/soft body
+  (not exposed in this WASM build, 100+ DoF too heavy on Quest), hundreds of small particles (contact pairs ∝ n², main-thread sim),
+  welded particle clusters (unstable with the light pats). Not physical: the layer does not push back on the knife and cannot be scraped off.
+- **Rubber knife handle**: `knife_handle` friction 1.4 / torsion 0.01 / rolling 0.001, `condim="6"`, matte dark `material="rubber"`,
+  *stiffer* contact (`solref 0.004`) and globally `cone="elliptic" impratio="10"` (MuJoCo's recommendation for grasping).
+  Root cause of the dropping knife: the knife is pinched at the very fingertips (≈ 1 cm overlap) and with the default contact softness the
+  fingers sank ≈ 5 mm into the light (60 g) handle, so it crept out — it even fell when just held still for 5 s.
+  `node tools/test-knife-grip.mjs [--xml=…]`: hold still / shake / tilt / roll / jerk + 30 random VR-like disturbances: falls 87 % → 17 %.
+  Friction alone did nothing (100 % fall); a softer "rubber" solref made it worse.
 - No headset camera streaming needed here — you're *in* the sim, which is the
   nice part of the browser version.
 

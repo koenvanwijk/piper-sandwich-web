@@ -12,11 +12,11 @@ import { relaxBaseContacts } from '../src/sandwich-motion.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export async function createHeadlessSim({ relaxBase = true } = {}) {
+export async function createHeadlessSim({ relaxBase = true, sceneXml = null } = {}) {   // sceneXml: alternatieve MJCF-tekst (bv. voor/na-vergelijking)
   const mj = await load_mujoco();
   mj.FS.mkdir('/working'); mj.FS.mount(mj.MEMFS, { root: '.' }, '/working');
   mj.FS.mkdir('/working/meshes');
-  mj.FS.writeFile('/working/scene.xml', fs.readFileSync(path.join(ROOT, 'assets/scene.xml'), 'utf8'));
+  mj.FS.writeFile('/working/scene.xml', sceneXml ?? fs.readFileSync(path.join(ROOT, 'assets/scene.xml'), 'utf8'));
   const md = path.join(ROOT, 'assets/meshes');
   for (const f of fs.readdirSync(md)) mj.FS.writeFile('/working/meshes/' + f, fs.readFileSync(path.join(md, f)));
   const model = mj.MjModel.mj_loadXML('/working/scene.xml');
