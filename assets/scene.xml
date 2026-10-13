@@ -1,7 +1,9 @@
 <mujoco model="dual_piper_sandwich">
   <compiler angle="radian" meshdir="meshes"/>
 
-  <option integrator="implicitfast"/>
+  <!-- elliptische wrijvingskegels + impratio 10: de MuJoCo-aanbeveling voor grijpen (minder "kruipen" van vastgehouden objecten).
+       Gemeten: geen extra rekentijd in de demo (tools/run-sandwich-demo.mjs). -->
+  <option integrator="implicitfast" cone="elliptic" impratio="10"/>
 
   <size nkey="1" nuser_actuator="1"/>
 
@@ -13,6 +15,8 @@
   <asset>
     <texture type="2d" colorspace="auto" name="grid" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.15 0.2" width="300" height="300"/>
     <material name="grid" texture="grid" texuniform="true" texrepeat="6 6" reflectance="0.1"/>
+    <!-- mat donker rubber (meshandvat): geen glans/reflectie (scene-loader: roughness = 1 − shininess) -->
+    <material name="rubber" rgba="0.07 0.07 0.08 1" specular="0.05" shininess="0" reflectance="0"/>
     <mesh name="left_base_link" file="base_link.STL"/>
     <mesh name="left_link1" file="link1.STL"/>
     <mesh name="left_link2" file="link2.STL"/>
@@ -146,65 +150,73 @@
       <joint type="free"/>
       <geom size="0.045 0.045 0.013" type="box" condim="4" friction="1.2 0.02 0.001" mass="0.03" rgba="0.9 0.78 0.52 1"/>
     </body>
+    <!-- Boter (14 blokjes): GLAD en ZACHT (wrijving 0,3, condim 3, zacht contact solimp 0,6–0,9) zodat het mes ze wegschuift/
+         uitsmeert i.p.v. ze als plakkerige vaste blokken mee te sleuren (was: wrijving 2,5, condim 4, solref 0,012).
+         Het uitsmeren zelf is een kinematische smeerlaag in src/butter-spread.js (blad drukt op blokje → blokje gaat als voorraad
+         op het mes; bewegend blad dicht boven bread0 → dekking groeit). -->
     <body name="butter0" pos="0.163002 0.0695331 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter1" pos="0.166616 0.053405 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter2" pos="0.155204 0.0689653 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter3" pos="0.148126 0.0677095 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter4" pos="0.16713 0.0592304 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter5" pos="0.155273 0.0546822 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter6" pos="0.154117 0.0586818 0.027">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter7" pos="0.160109 0.0612839 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter8" pos="0.171892 0.0670239 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter9" pos="0.162932 0.071735 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter10" pos="0.153167 0.0518451 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter11" pos="0.162701 0.0490546 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter12" pos="0.148856 0.0603573 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="butter13" pos="0.159189 0.070012 0.034">
       <joint type="free"/>
-      <geom size="0.008 0.008 0.0035" type="box" condim="4" friction="2.5 0.05 0.002" solref="0.012" solimp="0.88 0.94" mass="0.004" rgba="0.98 0.86 0.3 1"/>
+      <geom size="0.008 0.008 0.0035" type="box" condim="3" friction="0.3 0.005 0.0001" solref="0.02 1" solimp="0.6 0.9 0.004" mass="0.004" rgba="0.98 0.86 0.3 1"/>
     </body>
     <body name="knife" pos="0.13 -0.22 0.031">
       <joint type="free"/>
-      <geom name="knife_handle" size="0.045 0.01 0.008" pos="-0.045 0 0" type="box" condim="4" mass="0.04" rgba="0.15 0.15 0.18 1"/>
+      <!-- Rubber handvat: hoge wrijving (glijden 1,4; torsie 0,01 m; rollen 0,001), condim 6 (ook torsie-/rolwrijving).
+           Contact STIJVER dan standaard (solref 0,004 i.p.v. 0,02): MuJoCo schaalt de contactstijfheid met de effectieve massa,
+           en bij dit lichte mes (60 g) onder ~47 N knijpkracht zakten de vingers er met de standaard ~5 mm in → het mes kantelde
+           en kroop uit de vingertoppen. "Zacht rubber" via een zachtere solref maakte het in de meting juist slechter. -->
+      <geom name="knife_handle" size="0.045 0.01 0.008" pos="-0.045 0 0" type="box" condim="6" friction="1.4 0.01 0.001" solref="0.004 1" solimp="0.95 0.99 0.001" mass="0.04" material="rubber"/>
       <geom name="knife_blade" size="0.07 0.014 0.002" pos="0.07 0 0" type="box" condim="4" mass="0.02" rgba="0.8 0.82 0.85 1"/>
     </body>
     <body name="jar" pos="0.23 0.33 0">

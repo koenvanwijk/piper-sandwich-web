@@ -8,12 +8,16 @@
 // Gebruik: node tools/run-sandwich-demo.mjs [--json] [--speed=1] [--tuning='{"PUSH_END_DY":-0.05}'] [--require-top]
 import { createHeadlessSim } from './headless-sim.mjs';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, GEOM } from '../src/sandwich-motion.js';
+import { createButterSim } from '../src/butter-spread.js';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
 const speed = Number((args.find(a => a.startsWith('--speed=')) || '--speed=1').split('=')[1]);
 
 const env = await createHeadlessSim();
+// Smeerlaag (src/butter-spread.js): standaard aan, zoals in de app; --no-spread = oude gedrag (alleen blokjes)
+const SPREAD = !args.includes('--no-spread'), butterSim = createButterSim(env.mujoco, env.model, env.data);
+let spreadMs = 0, spreadN = 0;
 const { mujoco, model, data } = env;
 const FRAME = 0.05;                                   // zoals app.js: 25 x 0.002 s
 
@@ -49,6 +53,7 @@ let guard = 0;
 while (!player.done && guard++ < 20000) {
   player.update(FRAME * speed);
   env.stepPhysics(FRAME);
+  if (SPREAD && butterSim) { const t1 = performance.now(); butterSim.step(FRAME); spreadMs += performance.now() - t1; spreadN++; }
   if (!cur) continue;
   // Let op: na update() kan de speler al naar de volgende stap zijn gesprongen; we meten
   // met de actuele 'cmd' (doelpose) tegen de echte TCP.
@@ -113,6 +118,8 @@ else {
   console.log('\n=== Einde ===');
   console.log(`bread1 ${JSON.stringify(closed.bread1)}  bread0 ${JSON.stringify(closed.bread0)}`);
   console.log(`bread1 t.o.v. bread0: dxy ${closed.dxyMm} mm, dz ${closed.dzMm} mm (tussenruimte ${closed.gapMm} mm, begin 30 mm) -> ${closed.adjacent ? 'ZIJ AAN ZIJ (dichtgeschoven) ✔' : 'niet dichtgeschoven ✘'}; ${closed.onTop ? 'ligt OP bread0 ✔' : 'ligt NIET bovenop bread0 (bekende beperking)'}`);
+  { const sc = butterSim.score();
+    console.log(`smeer-score: bedekt broodoppervlak ${(100 * sc.withBlocks).toFixed(0)} % (smeerlaag ${(100 * sc.layer).toFixed(0)} % + voetafdruk resterende blokjes), ${sc.absorbed}/14 blokjes uitgesmeerd, voorraad op mes ${(sc.supply * 1e4).toFixed(1)} cm²; smeerlaag ${SPREAD ? (1000 * spreadMs / Math.max(1, spreadN)).toFixed(0) + ' µs/frame' : 'uit (--no-spread)'}`); }
   console.log(`boter: ${butter.onBread0Before}/${butter.total} blokjes op bread0 vooraf, ${butter.onBread0After}/${butter.total} achteraf; spreiding (std xy) ${butter.stdBeforeMm} -> ${butter.stdAfterMm} mm`);
   console.log(`mes eind ${JSON.stringify(knifeOnPlate.knife)}; afstand xy tot bord-midden ${knifeOnPlate.dxyToPlateMm} mm -> ${knifeOnPlate.onPlate ? 'ligt op het bord ✔' : 'ligt NIET op het bord ✘'}`);
   console.log(`(simulatietijd ${data.time.toFixed(1)} s, rekentijd ${((performance.now()-t0)/1000).toFixed(1)} s)`);

@@ -9,6 +9,7 @@ import { mat2quat, rotErr } from './qmath.js';
 import { parseTargetOpts, TargetStatus, createTargetGhosts } from './target-viz.js';
 import { FeatureFlags, safeStorage } from './flags.js';
 import { createFlagMenu } from './flag-menu.js';
+import { createButterSim, createSpreadLayer } from './butter-spread.js';
 import { createDemoPanel } from './demo-ui.js';
 import { MotionPlayer, makeSandwichChoreography, readObjectPositions, relaxBaseContacts } from './sandwich-motion.js';
 import { parseRecConfig } from './recorder-client.js';
@@ -18,6 +19,8 @@ import { mjToWorld, headYaw, homeFromHead } from './xr-map.js';
 const SIDES = ['left', 'right'];
 // Demo (choreografie) is alleen actief met ?demo=1 in de URL; zonder verandert er niets.
 const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+// Smeerbare boter (src/butter-spread.js): standaard aan; ?spread=0 = oude gedrag (alleen de fysieke blokjes).
+const SPREAD_ON = new URLSearchParams(location.search).get('spread') !== '0';
 // Opname (WebSocket-recorder) is alleen actief met ?rec=wss://host/ws#token=... (zie README "Recording client").
 // Zonder ?rec verandert er niets aan de frame-loop (rec-capture.js wordt dan niet geladen; recorder-client.js/rec-state.js zijn klein en zonder bijwerkingen).
 const RECCFG = parseRecConfig();
@@ -139,6 +142,11 @@ class SandwichVR {
     }
 
     if (FLAGS.get('target') !== 'off') this.ensureGhost();
+    if (SPREAD_ON) {
+      this._butter = createButterSim(mujoco, this.model, this.data);
+      const bb = mujoco.mj_name2id(this.model, mujoco.mjtObj.mjOBJ_BODY.value, 'bread0');
+      if (this._butter && this.bodies[bb]) this._butterLayer = createSpreadLayer({ THREE, breadGroup: this.bodies[bb], spread: this._butter.spread });
+    }
     if (DEMO) this.initDemo();
     if (RECCFG) await this.initRec();
     if (FLAGS.get('debug')) await this.ensureDebug();
@@ -244,6 +252,7 @@ class SandwichVR {
       onRestart: () => {
         // scene terug naar de 'home'-keyframe en choreografie herstarten
         this.mujoco.mj_resetData(this.model, this.data);
+        if (this._butter) this._butter.reset();
         if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
         this.mujoco.mj_forward(this.model, this.data);
         for (const s of SIDES) { this.qTarget[s] = this.ik[s].currentQ(); this.grip[s] = 0; }
@@ -308,6 +317,7 @@ class SandwichVR {
   resetScene() {
     const mj = this.mujoco;
     mj.mj_resetData(this.model, this.data);
+    if (this._butter) this._butter.reset();
     if (this.model.nkey > 0) this.data.qpos.set(this.model.key_qpos.slice(0, this.model.nq));
     mj.mj_forward(this.model, this.data);
     for (const s of SIDES) {
@@ -348,6 +358,7 @@ class SandwichVR {
     const r = this.rec, obs = r.sampler.observe();
     const anyEngaged = this.control(cmds, dt);
     for (let i = 0; i < 16; i++) this.mujoco.mj_step(this.model, this.data);
+    if (this._butter) this._butter.step(dt);
     const seq = r.seq++; r.tSim = r.seq * dt; r.ticks++;
     r.client.sendState({ type: 'state', seq, t_sim: +(seq * dt).toFixed(6), t_client_ms: +performance.now().toFixed(1),
       state: obs.state, action: r.sampler.action(), tcp: obs.tcp, ctrl: ctrlSummary(cmds, this.teleop),
@@ -572,9 +583,11 @@ class SandwichVR {
       const dt = this.model.opt.timestep;
       let n = 0;
       while (this._acc >= dt && n < 30) { mujoco.mj_step(this.model, this.data); this._acc -= dt; n++; }
+      if (this._butter && n) this._butter.step(n * dt);
     }
 
     this.syncScene();
+    if (this._butter) { this._butter.blocks.forEach((b, k) => { if (this.bodies[b]) this.bodies[b].visible = this._butter.active[k]; }); if (this._butterLayer) this._butterLayer.update(); }
     if (this._dbg && FLAGS.get('debug')) this._dbg.update(this.debugInfo());
 
     if (!this.renderer.xr.isPresenting) this.controls.update();
