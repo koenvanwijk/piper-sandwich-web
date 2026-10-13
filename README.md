@@ -117,6 +117,10 @@ gripper tegen `bread0` aan schuiven — *niet* bovenop leggen, zie beperkingen).
 
 ## Recording client (opt-in, `?rec=`)
 
+> **Snel starten op de Quest:** open [`record.html`](https://koenvanwijk.github.io/piper-sandwich-web/record.html) (link "🔴 Opname-sessie"
+> op de hoofdpagina): host + token één keer invullen (alleen lokaal bewaard), **Test verbinding**, **Start opname-sessie**.
+> De server draait op de robot-PC en moet via `wss://` met geldig certificaat bereikbaar zijn (Tailscale/Caddy), zie `server/README.md`.
+
 Fase 1 van `DESIGN-vr-recording.md`: de browser kan elke simulatietick naar een server sturen (bv. de robot-pc die er
 later een LeRobot-dataset van maakt). **Zonder `?rec` verandert er niets** (teleop, `?demo=1`, VR: zelfde loop en
 2 ms-fysica). Er is hier nog geen echte server, geen PiperSimRobot en geen upload.

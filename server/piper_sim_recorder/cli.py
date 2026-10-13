@@ -29,6 +29,39 @@ def parse_cams(s: str) -> dict[str, tuple[int, int]]:
     return out
 
 
+DEFAULT_PAGE = "https://koenvanwijk.github.io/piper-sandwich-web/"
+
+
+def setup_url(page: str, ws_url: str, token: str, cams: dict) -> str:
+    """record.html-link met alles in het #fragment (wordt niet naar servers gestuurd / niet gelogd)."""
+    from urllib.parse import urlencode
+    sizes = {f"{w}x{h}" for w, h in cams.values()}
+    f = {"rec": ws_url}
+    if token:
+        f["token"] = token
+    f["cams"] = ",".join(cams)
+    if len(sizes) == 1:
+        f["camsize"] = sizes.pop()
+    return page.rstrip("/") + "/record.html#" + urlencode(f)
+
+
+def print_setup_url(a, bridge, cfg) -> None:
+    """Print (stdout, niet via logging) de kant-en-klare link + optioneel een QR (pip install qrcode)."""
+    ws_url = a.public_url or f"{'wss' if cfg.tls_cert else 'ws'}://{'localhost' if cfg.host in ('127.0.0.1', '0.0.0.0', '::') else cfg.host}:{bridge.port}/ws"
+    url = setup_url(a.page_url, ws_url, os.environ.get("PIPER_WS_TOKEN", ""), cfg.camera_sizes)
+    print("\n=== Opname-sessie ===  (bevat het token: niet delen, niet in chat/issues plakken)", flush=True)
+    if not a.public_url:
+        print("  let op: geen --public-url opgegeven; vanaf de Quest is wss://<host-met-geldig-cert>/ws nodig", flush=True)
+    print("  open op de Quest:  " + url, flush=True)
+    try:
+        import qrcode                                               # optioneel
+        q = qrcode.QRCode(border=1); q.add_data(url); q.make(fit=True)
+        q.print_ascii(invert=True)
+    except ImportError:
+        print("  (QR-code: pip install qrcode)", flush=True)
+    print(flush=True)
+
+
 def cmd_serve(a) -> int:
     cfg = PiperSimRobotConfig(host=a.host, port=a.port, fps=30, camera_sizes=parse_cams(a.cams),
                               allowed_origins=[o for o in a.origin], allow_missing_origin=a.allow_missing_origin,
@@ -58,6 +91,8 @@ def cmd_serve(a) -> int:
         signal.signal(sig, lambda *_: stop.set())
     if a.port_file:
         Path(a.port_file).write_text(str(bridge.port))
+    if not a.no_print_url:
+        print_setup_url(a, bridge, cfg)
     stop.wait()
     log.info("stoppen ...")
     bridge.stop()
@@ -99,6 +134,9 @@ def main(argv=None) -> int:
     s.add_argument("--vcodec", default=None, help="videocodec (standaard LeRobot: libsvtav1)")
     s.add_argument("--crf", type=int, default=None)
     s.add_argument("--tls-cert"); s.add_argument("--tls-key")
+    s.add_argument("--public-url", help="wss-URL zoals de Quest de server bereikt, bv. wss://robot-pc.tailnet.ts.net/ws (voor de geprinte link)")
+    s.add_argument("--page-url", default=DEFAULT_PAGE, help="basis-URL van de webapp (standaard GitHub Pages)")
+    s.add_argument("--no-print-url", action="store_true", help="print de opname-link (met token) niet bij start")
     s.add_argument("--port-file", help="schrijf de gekozen poort hierheen (bij --port 0)")
     s.add_argument("--push", action="store_true", help="na afloop uploaden naar de Hub (standaard UIT; vereist HF_TOKEN)")
     s.add_argument("--dry-run", action="store_true", help="na afloop alleen valideren (geen upload)")

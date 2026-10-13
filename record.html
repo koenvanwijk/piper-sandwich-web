@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Piper sandwich – opname-sessie</title>
+<style>
+  body { font: 16px/1.45 system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 24px; }
+  main { max-width: 640px; margin: auto; }
+  label { display: block; margin: 14px 0 4px; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 10px; font-size: 17px;
+    background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; }
+  .row { display: flex; gap: 10px; } .row > div { flex: 1; }
+  button { font-size: 18px; padding: 12px 18px; margin: 18px 10px 0 0; border-radius: 10px; border: 0; cursor: pointer; }
+  #start { background: #da3633; color: #fff; } #test { background: #30363d; color: #e6edf3; }
+  #status { margin-top: 18px; padding: 12px; border-radius: 8px; background: #161b22; min-height: 1.4em; white-space: pre-wrap; }
+  #status.ok { border-left: 6px solid #3fb950; } #status.err { border-left: 6px solid #f85149; } #status.busy { border-left: 6px solid #d29922; }
+  small, .help { color: #8b949e; } code { background: #161b22; padding: 1px 5px; border-radius: 5px; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔴 Opname-sessie</h1>
+  <p class="help">De opname-server (<code>piper-sim-recorder serve</code>) draait op de <b>robot-PC</b>, niet op GitHub Pages.
+    Vul host en token één keer in; ze worden alleen op dit apparaat bewaard (localStorage). Het token gaat via het
+    <code>#fragment</code> naar de sim en komt nooit in een querystring of serverlog.</p>
+
+  <label for="url">Server (wss://…)</label>
+  <input id="url" type="text" placeholder="wss://robot-pc.tailnet.ts.net/ws" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <small>Vanaf https is <b>wss://</b> met een geldig certificaat nodig (bv. <code>tailscale serve</code> of Caddy). Alleen <code>host</code> mag ook.</small>
+
+  <label for="token">Token (<code>PIPER_WS_TOKEN</code>)</label>
+  <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <label style="font-weight:400"><input id="remember" type="checkbox" checked> token onthouden op dit apparaat</label>
+
+  <div class="row">
+    <div><label for="cams">Camera's</label><input id="cams" type="text" value="front,top"></div>
+    <div><label for="camsize">Formaat</label><input id="camsize" type="text" value="640x480"></div>
+  </div>
+  <small>Moet overeenkomen met <code>--cams</code> van de server (standaard <code>front:640x480,top:640x480</code>).</small>
+
+  <div><button id="test">Test verbinding</button><button id="start">Start opname-sessie</button></div>
+  <div id="status">Nog niet getest.</div>
+
+  <h3>In VR</h3>
+  <p class="help">A = start/stop (bewaren) · B = weggooien · X = geslaagd + stop · Y = scene reset · thumbstick-druk = recenter ·
+    MENU-knop = flags. Desktop: S / D / K / R.</p>
+  <p class="help"><a href="./index.html">← terug naar de sim (zonder opname)</a> · <a href="https://github.com/koenvanwijk/piper-sandwich-web/blob/main/server/README.md">server-handleiding</a></p>
+</main>
+<script type="module" src="./src/record-page.js"></script>
+</body>
+</html>
