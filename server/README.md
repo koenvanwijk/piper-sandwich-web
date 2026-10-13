@@ -54,6 +54,33 @@ Open in de browser: `https://koenvanwijk.github.io/piper-sandwich-web/?rec=wss:/
   `RobotConfig` daar `CameraConfig`-objecten verwacht). `send_action()` clamp op gewrichtslimieten en `max_relative_target` (standaard 0,35 rad/stap) en stuurt
   **nog niets** naar hardware.
 
+## Opnemen vanaf de Quest via de live site (record.html)
+
+De webapp staat op GitHub Pages; **de Python-server draait op de robot-PC** (Pages host alleen statische bestanden).
+Een https-pagina mag alleen naar `wss://` met een **geldig certificaat** verbinden (mixed content; een zelfgetekend certificaat
+of `ws://<LAN-IP>` werkt op de Quest niet).
+
+1. Robot-PC, server alleen op loopback:
+   ```bash
+   export PIPER_WS_TOKEN=$(openssl rand -hex 16)
+   .venv/bin/piper-sim-recorder serve --root ~/lerobot_datasets/piper-sandwich-sim --task "Broodje smeren (VR)" \
+       --host 127.0.0.1 --port 8765 --origin https://koenvanwijk.github.io --cams front:640x480,top:640x480 \
+       --public-url wss://<robot-pc>.<tailnet>.ts.net/ws
+   ```
+2. `wss://`-voorkant met echt certificaat, bv. **Tailscale** (Quest en robot-PC in hetzelfde tailnet, HTTPS-certificaten aan in de admin-console):
+   `tailscale serve --bg --https=443 http://127.0.0.1:8765` → `wss://<robot-pc>.<tailnet>.ts.net/ws`.
+   Of **Caddy** met een eigen domein: `rec.example.nl { reverse_proxy 127.0.0.1:8765 }`.
+3. De server print bij start een link `https://koenvanwijk.github.io/piper-sandwich-web/record.html#rec=…&token=…` (met QR als
+   `pip install qrcode` is gedaan). Het token staat **alleen in het `#fragment`** (gaat niet naar GitHub/servers/logs). De link
+   bevat het token: niet in chat/issues plakken. `--no-print-url` zet dit uit.
+4. Op de Quest: open die link (of open `…/record.html` en vul host + token één keer in; bewaard in localStorage van de Quest-browser),
+   druk **Test verbinding** (hello + ping; meldt fout token, time-out/certificaat, origin) en dan **Start opname-sessie**.
+5. In VR: A start/stop, X geslaagd + stop, B weggooien, Y reset (zie hoofd-README).
+
+Let op: Chromium-browsers (ook de Quest-browser, vermoedelijk) passen "Local Network Access" toe: een publieke pagina die naar een
+privé/Tailscale-adres verbindt kan een toestemmingsvraag geven of geblokkeerd worden. Sta dit toe als erom gevraagd wordt.
+Niet getest op een echte Quest.
+
 ## Uploaden naar Hugging Face (standaard UIT)
 
 De upload is niet in deze PR tegen de echte Hub getest (alleen dry-run en mock). Doe de **eerste upload bewust privé** en met `--dry-run` vooraf.
