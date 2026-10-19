@@ -1,0 +1,173 @@
+{
+    "robot": {
+        "robot_name": "X2_omnipicker_fixed",
+        "base_prim_path": "/X2",
+        "arm_base_prim_path": "/X2/torso_link",
+        "arm": "dual",
+        "urdf_name": "/X2/X2_omnipicker_fixed_dual.urdf",
+        "robot_description": {
+            "right": "/X2/X2_omnipicker_fixed_right.yaml",
+            "left": "/X2/X2_omnipicker_fixed_left.yaml"
+        },
+        "robot_usd": "robot/X2/robot_fix.usda",
+        "initial_position": [],
+        "dof_nums": 7,
+        "joint_delta_time": 0.01,
+        "lock_joints": [
+            "left_hip_pitch_joint",
+            "left_hip_roll_joint",
+            "left_hip_yaw_joint",
+            "left_knee_joint",
+            "left_ankle_pitch_joint",
+            "left_ankle_roll_joint",
+            "right_hip_pitch_joint",
+            "right_hip_roll_joint",
+            "right_hip_yaw_joint",
+            "right_knee_joint",
+            "right_ankle_pitch_joint",
+            "right_ankle_roll_joint",
+            "waist_yaw_joint",
+            "waist_pitch_joint",
+            "waist_roll_joint",
+            "head_yaw_joint",
+            "head_pitch_joint",
+            "L_hand_wide1_joint",
+            "R_hand_wide1_joint"
+        ],
+        "active_arm_joints": {
+            "left": [
+                "left_shoulder_pitch_joint",
+                "left_shoulder_roll_joint",
+                "left_shoulder_yaw_joint",
+                "left_elbow_joint",
+                "left_wrist_yaw_joint",
+                "left_wrist_pitch_joint",
+                "left_wrist_roll_joint"
+            ],
+            "right": [
+                "right_shoulder_pitch_joint",
+                "right_shoulder_roll_joint",
+                "right_shoulder_yaw_joint",
+                "right_elbow_joint",
+                "right_wrist_yaw_joint",
+                "right_wrist_pitch_joint",
+                "right_wrist_roll_joint"
+            ]
+        },
+        "init_joint_position": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.2,
+            0.0,
+            -1.2,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            -0.2,
+            0.0,
+            -1.2,
+            0.0,
+            0.0,
+            0.0,
+            null,
+            null,
+            null,
+            null
+        ]
+    },
+    "camera": {
+        "/X2/head_pitch_link/head_front_Camera": [
+            640,
+            400
+        ]
+    },
+    "gripper": {
+        "gripper_type": "angular",
+        "gripper_name": {
+            "left": "gripper_omnipicker",
+            "right": "gripper_omnipicker"
+        },
+        "max_force": 10,
+        "finger_names": {
+            "left": [
+                "left_claw_joint",
+                "L_hand_wide1_joint"
+            ],
+            "right": [
+                "right_claw_joint",
+                "R_hand_wide1_joint"
+            ]
+        },
+        "end_effector_name": {
+            "left": "gripper_l_center_link",
+            "right": "gripper_r_center_link"
+        },
+        "end_effector_prim_path": {
+            "left": "/X2/left_wrist_roll_link",
+            "right": "/X2/right_wrist_roll_link"
+        },
+        "end_effector_center_prim_path": {
+            "left": "/X2/gripper_l_center_link",
+            "right": "/X2/gripper_r_center_link"
+        },
+        "gripper_controll_joint": {
+            "left": "/X2/joints/left_claw_joint",
+            "right": "/X2/joints/right_claw_joint"
+        },
+        "opened_positions": {
+            "left": [
+                -1.0,
+                1.0
+            ],
+            "right": [
+                -1.0,
+                1.0
+            ]
+        },
+        "closed_velocities": {
+            "left": [
+                5,
+                -5
+            ],
+            "right": [
+                5,
+                -5
+            ]
+        }
+    },
+    "closed_positions": {
+        "left": [
+            0,
+            0
+        ],
+        "right": [
+            0,
+            0
+        ]
+    },
+    "curobo": {
+        "curobo_config_file": {
+            "right": "X2_omnipicker_fixed_dual.yml",
+            "left": "X2_omnipicker_fixed_left.yml"
+        },
+        "curobo_urdf_path": "X2",
+        "curobo_urdf_name": "X2/X2_omnipicker_fixed_dual.urdf"
+    }
+}
