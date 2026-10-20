@@ -16,7 +16,7 @@ export const SPREAD_DEFAULTS = {
   half: [0.045, 0.045],   // bread0 bovenvlak (halve maten, m)
   topZ: 0.013,            // bovenvlak t.o.v. bread0-midden (m)
   cell: 0.003,            // celgrootte (m) → 30 × 30 cellen
-  bladeHalf: [0.07, 0.014, 0.002],   // knife_blade (box, halve maten)
+  bladeHalf: [0.07, 0.014, 0.00075],   // knife_blade (box, halve maten; 1,5 mm tafelmesblad)
   blockHalf: [0.008, 0.008, 0.0035], // boterblokje
   blockCoverM2: 0.0006,   // oppervlak (m²) dat één blokje volledig kan bedekken (6 cm² ≈ 2,3 × zijn voetafdruk); 14 blokjes ≈ 1 × broodvlak
   PICK_MM: 4,             // blad-onderkant hoogstens zoveel boven de bovenkant van een blokje = "druk" → opnemen

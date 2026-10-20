@@ -1,0 +1,7 @@
+mujoco>=3.15
+numpy
+pyyaml
+yourdfpy
+trimesh
+pillow
+pytest

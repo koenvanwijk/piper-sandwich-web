@@ -21,4 +21,4 @@ def test_fnv1a_matches_browser():
     # waarde uit de e2e-run: fnv1a(scene.xml) in src/rec-state.js == Python
     import pathlib
     xml = (pathlib.Path(__file__).resolve().parents[2] / "assets" / "scene.xml").read_text(encoding="utf-8")
-    assert fnv1a(xml) == "8755732d"   # bijgewerkt: rubber meshandvat + smeerbare boter
+    assert fnv1a(xml) == "7e21c96f"   # bijgewerkt: dun mesblad 1,5 mm (rubber handvat behouden)
