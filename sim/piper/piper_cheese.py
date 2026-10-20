@@ -33,6 +33,8 @@ PITCH_DEG = 30.0   # hand pitched 30 deg down: a fully horizontal approach at 2.
 SCHEDULE = (("settle", 0.6), ("knife_down", 0.6), ("insert", 2.0), ("knife_lift", 0.6), ("reach", 1.4),
             ("grasp", 0.3), ("pick", 1.2), ("hold", 0.8))
 TILES_C = STACK_XY
+HOLDER = True
+HOLDER_GAP = 0.0025   # rand eindigt 2,5 mm onder de naad (1 mm onder de lemmet-onderkant)
 SAG = []
 
 
@@ -44,6 +46,13 @@ def build(offscreen=(1280, 720)):
     ET.SubElement(wb, "geom", name="stop", type="box", size=f"{SIZE / 2 + 0.01} 0.003 {h / 2}",
                   pos=f"{STACK_XY[0]} {STACK_XY[1] - SIZE / 2 - T / 2 - 0.003} {P.TABLE_TOP + h / 2}",
                   rgba="0.45 0.3 0.2 1", friction="1.0 0.005 0.0001")
+    if HOLDER:  # opstaande rand op -x en +y: de stapel schoof daarheen (terugveren van de -y aanslag, meeslepen door het mes)
+        h2 = INTERFACE_Z - HOLDER_GAP - P.TABLE_TOP          # onder het lemmet door (lemmet-onderkant = naad - 1,5 mm)
+        cx, cy, a = STACK_XY[0], STACK_XY[1], SIZE / 2 + T / 2 + 0.003
+        ET.SubElement(wb, "geom", name="rim_px", type="box", size=f"{SIZE / 2 + 0.01} 0.003 {h2 / 2}",
+                      pos=f"{cx} {cy + a} {P.TABLE_TOP + h2 / 2}", rgba="0.45 0.3 0.2 1", friction="1.0 0.005 0.0001")
+        ET.SubElement(wb, "geom", name="rim_mx", type="box", size=f"0.003 {SIZE / 4} {h2 / 2}",   # alleen +y-helft: hoek vrij (hoger, tot de bovenste plak, maakte plak 9 slechter: 61 mm)
+                      pos=f"{cx - a} {cy + SIZE / 4} {P.TABLE_TOP + h2 / 2}", rgba="0.45 0.3 0.2 1", friction="1.0 0.005 0.0001")
     sp = SIZE / (COUNT - 1)
     for i in range(N):
         fc = ET.SubElement(wb, "flexcomp", name=f"cheese{i}", type="grid", dim="2", count=f"{COUNT} {COUNT} 1",

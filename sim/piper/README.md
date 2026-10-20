@@ -50,6 +50,22 @@ Het dunne mes botst bij de boter via onzichtbare proxy-segmenten van 4 mm, die h
 
 In de webdemo heeft het dunne lemmet `margin="1 mm"`. `run-sandwich-demo` en `test-knife-grip` geven vrijwel dezelfde uitkomst als met 4 mm.
 
+## Kaasstapel met opstaande rand (1,5 mm Piper-mes): voor/na
+
+De stapel schoof naar −x en +y. Daarom staat er nu een rand op die twee kanten, naast de bestaande aanslag op −y:
+- **+y-rand**: de kant waar het mes binnenkomt. Hij eindigt 2,5 mm onder de naad, dus 1 mm onder de onderkant van het lemmet; mes en bovenste plak gaan er vrij overheen.
+- **−x-rand**: alleen over de +y-helft, zodat de griphoek vrij blijft.
+
+| | zonder rand | met rand |
+|---|---|---|
+| losgekomen plakken | 1 (bovenste +34 mm) | 1 (bovenste +32 mm) |
+| verschuiving plakken 1–8 | tot 56 mm | **≤ 8,3 mm** |
+| verschuiving plak 9 (direct onder de bovenste) | 43 mm | 31 mm |
+| doorbuiging bovenste plak | 68 mm | 79 mm |
+| rekentijd per sim-seconde | ~16 s | ~16 s (met renderen 23 s) |
+
+Plak 9 ligt boven de rand en wordt nog steeds door het mes en de bovenste plak meegesleept. Een −x-rand tot net onder de bovenste plak maakte het slechter: plak 9 schoof 61 mm. De plakken komen 2–7 mm omhoog.
+
 ## Beperkingen (eerlijk)
 
 **Boter**
