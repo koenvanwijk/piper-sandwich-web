@@ -20,6 +20,11 @@ def test_holder_rims_below_blade():
         assert top < blade_bottom - 0.0005  # mes en bovenste plak gaan er vrij overheen
 
 
+def test_finger_proxy():
+    m = C.build(offscreen=(64, 64))
+    assert C.FINGER and m.geom("right_tip_proxy").contype == 1
+
+
 def test_jaw_fits():  # Piper: 2 x 35 mm; the jaw opens 2 x 30 mm around a 2 mm slice
     assert 2 * C.JAW_OPEN <= 0.070 and 2 * C.JAW_OPEN > C.T + 0.02
 
@@ -29,4 +34,5 @@ def test_pick_top_slice():
     r = C.simulate()
     assert r["finite"] and r["top_lifted"] and r["n_lifted"] == 1
     assert r["ik_max_err"] < 5e-3
-    assert max(r["shift"][:-2]) < 0.012  # plakken 1-8 met rand: <= ~8 mm
+    assert max(r["shift"][:-2]) < 0.015  # plakken 1-8 met rand + vinger: <= ~11 mm
+    assert r["shift"][-2] < 0.02         # plak 9 met drukvinger: ~13 mm (zonder 31 mm)

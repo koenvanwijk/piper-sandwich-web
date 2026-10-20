@@ -34,6 +34,9 @@ SCHEDULE = (("settle", 0.6), ("knife_down", 0.6), ("insert", 2.0), ("knife_lift"
             ("grasp", 0.3), ("pick", 1.2), ("hold", 0.8))
 TILES_C = STACK_XY
 HOLDER = True
+FINGER = True          # right gripper (closed) presses the stack during the insert, released before the grasp
+FINGER_XY = (STACK_XY[0] - 0.02, STACK_XY[1] - 0.025)   # -y half, away from the blade tip and the grasp corner
+FINGER_PRESS = 0.0015  # tip target 1.5 mm below the top surface (light press)
 HOLDER_GAP = 0.0025   # rand eindigt 2,5 mm onder de naad (1 mm onder de lemmet-onderkant)
 SAG = []
 
@@ -66,6 +69,11 @@ def build(offscreen=(1280, 720)):
                       solref="0.003 1", solimp="0.95 0.99 0.0005")
     ET.SubElement(P.find_body(r, "right_link6"), "site", name="right_pinch", pos=f"0 0 {P.TIP_Z - 0.005}", size="0.003",
                   group="4")
+    if FINGER:  # closed fingertip envelope of the right gripper (finger meshes do not collide with flex here)
+        b = ET.SubElement(P.find_body(r, "right_link6"), "body", name="right_tip_proxy")
+        ET.SubElement(b, "geom", name="right_tip_proxy", type="box", pos=" ".join(map(str, P.TIP_PROXY["pos"])),
+                      size=" ".join(map(str, P.TIP_PROXY["size"])), rgba="0.2 0.8 1 0", group="3",
+                      friction="1.0 0.005 0.0001")
     eq = ET.SubElement(r, "equality")
     for k in range(3):
         ET.SubElement(eq, "connect", name=f"grasp{k}", body1="right_link6", body2=f"cheese{N - 1}_0", anchor="0 0 0",
@@ -107,6 +115,11 @@ def plan(m):
     wR = {"above": q[qb].copy()}
     q = R(g, q); wR["grasp"] = q[qb].copy()
     q = R(g + np.array([0, 0, PICK_UP]) - 0.02 * DIAG, q); wR["up"] = q[qb].copy()
+    if FINGER:  # closed right gripper as a 'finger' pressing the stack (through the top slice) during the insert
+        p = np.array([*FINGER_XY, INTERFACE_Z + T - FINGER_PRESS])
+        qf, e, _ = P.ik_restarts(m, "right", p + [0, 0, 0.03], offset=(0, 0, P.TIP_Z), xax=(1, 0, 0), n=16); errs.append(e)
+        wR["f_above"] = qf[qb].copy()
+        qf, e, _ = P.ik(m, "right", p, qf, offset=(0, 0, P.TIP_Z), xax=(1, 0, 0)); errs.append(e); wR["f_press"] = qf[qb].copy()
     T0 = np.cumsum([0] + [s[1] for s in SCHEDULE])
 
     def seg(t):
@@ -120,6 +133,13 @@ def plan(m):
         if name == "insert": l = P.interp(np.array(wL["insert"]), s)
         r_ = {"reach": mix(wR["above"], wR["grasp"]), "grasp": wR["grasp"], "pick": mix(wR["grasp"], wR["up"]),
               "hold": wR["up"]}.get(name, wR["above"])
+        if FINGER:
+            if name == "settle": r_ = wR["f_above"]
+            elif name == "knife_down": r_ = mix(wR["f_above"], wR["f_press"])
+            elif name in ("insert", "knife_lift"): r_ = wR["f_press"]
+            elif name == "reach":  # lift off, then over to the corner grasp
+                r_ = ((1 - P.smooth(2 * u)) * wR["f_press"] + P.smooth(2 * u) * wR["f_above"] if u < 0.5 else
+                      (1 - P.smooth(2 * u - 1)) * wR["f_above"] + P.smooth(2 * u - 1) * wR["grasp"])
         qt[qa] = l; qt[qb] = r_; return qt
     return target, seg, float(T0[-1]), max(errs)
 
@@ -150,7 +170,7 @@ def simulate(callback=None, dt_cb=1 / 30):
         prev = name
         if name == "knife_down" and ref is None: ref = [slice_verts(m, d, i) for i in range(N)]
         if name == "grasp" and u > 0.5 and not grasped: res["grasp_dist"] = activate_grasp(m, d); grasped = True
-        jaw = JAW_CLOSED if (name in ("pick", "hold") or (name == "grasp" and u > 0.5)) else JAW_OPEN
+        jaw = JAW_CLOSED if (name in ("pick", "hold") or (FINGER and name in ("settle", "knife_down", "insert", "knife_lift")) or (name == "grasp" and u > 0.5)) else JAW_OPEN
         P.set_ctrl(m, d, target(t), {"left": K.GRIP_OPEN, "right": jaw}); mujoco.mj_step(m, d); t = d.time
         if not np.isfinite(d.qpos).all(): res["finite"] = False; break
         if callback and t >= nxt: callback(m, d, t, name); nxt += dt_cb

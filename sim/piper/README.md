@@ -66,6 +66,21 @@ De stapel schoof naar −x en +y. Daarom staat er nu een rand op die twee kanten
 
 Plak 9 ligt boven de rand en wordt nog steeds door het mes en de bovenste plak meegesleept. Een −x-rand tot net onder de bovenste plak maakte het slechter: plak 9 schoof 61 mm. De plakken komen 2–7 mm omhoog.
 
+## Kaasstapel met rand + drukvinger: voor/na
+
+De rechter gripper (gesloten, als 'vinger') drukt tijdens het onderschuiven en optillen van het mes licht op de stapel. Hij drukt door de bovenste plak heen, op de −y-helft, 1,5 mm in: weg van de mespunt en de griphoek. Vóór het pakken laat hij los (`FINGER = True` in `piper_cheese.py`).
+
+| | rand | rand + vinger |
+|---|---|---|
+| losgekomen plakken | 1 (bovenste +32 mm) | 1 (bovenste +36 mm) |
+| verschuiving plak 9 | 31 mm | **13 mm** |
+| verschuiving plakken 1–8 | ≤ 8,3 mm | ≤ 11 mm |
+| plak 9 omhoog | 3 mm | 9,5 mm |
+| doorbuiging bovenste plak | 79 mm | 83 mm |
+| afstand greep–plak bij het pakken | 6 mm | 29 mm (connect-constraint overbrugt dit) |
+
+Netto is de vinger beter: de grootste verschuiving gaat van 31 naar 13 mm. Plak 9 komt wel ~1 cm mee omhoog. De simulatie is chaotisch: een run zonder werkend vingercontact gaf 163 mm.
+
 ## Beperkingen (eerlijk)
 
 **Boter**
