@@ -1,6 +1,6 @@
 # Twee AgileX Piper-armen in MuJoCo: boter, mes, kaas en boterham
 
-Simulatie in **MuJoCo 3.15, niet in Isaac Sim**. Het robotmodel is `assets/scene.xml` van de webdemo. Het mes met rubber handvat uit PR #13 zit in `main`; de test `test_web_scene_has_rubber_knife` controleert dat.
+Simulatie in **MuJoCo 3.15, niet in Isaac Sim**. Het robotmodel is `assets/scene.xml` van de webdemo. Het mes met rubber handvat uit PR #13 zit in `main`; de test `test_web_scene_has_rubber_knife` controleert dat. Sinds 20 okt. 2026 is het lemmet **1,5 mm** (was 4 mm), zowel in de webdemo als hier: de Piper gebruikt nu overal hetzelfde dunne mes, ook bij de kaas.
 
 Waar het kan, wordt code uit `sim/x2` hergebruikt: dezelfde boterparameters, tet-topologie, kaasmodel en meetfuncties.
 
@@ -34,6 +34,22 @@ Waar het kan, wordt code uit `sim/x2` hergebruikt: dezelfde boterparameters, tet
 
 Bij de kaasstapel komt de grote verschuiving van plak 9 bij het optillen van het mes. Het lemmet ligt dan op de naad en sleept plak 9 mee. Het mes zakt onder de zwaartekracht ~1,8 mm door; daarvoor wordt gecorrigeerd.
 
+## Dunner mes (1,5 mm): voor/na
+
+| Experiment | lemmet 4 mm (en X2-mes bij kaas) | lemmet 1,5 mm (Piper-mes) |
+|---|---|---|
+| Mes-boter: max. hoogte tijdens de halen | 6,5–7,7 mm | 6,6–7,8 mm |
+| Mes-boter: oppervlak na 4 halen | 19,1 cm² | 19,0 cm² |
+| Mes-boter: na loslaten | 9,1 mm / 17,2 cm² | 9,0 mm / 17,2 cm² |
+| Kaas: losgekomen plakken | 1 (bovenste +31 mm) | 1 (bovenste +34 mm) |
+| Kaas: max. verschuiving overige plakken | 40 mm (plak 9) | **56 mm** (hele stapel schuift) |
+| Kaas: doorbuiging bovenste plak | 83 mm | 68 mm |
+| Boterham met mes als spatel | +9 mm, 42°, slip 38 mm | +8 mm, 41°, slip 37 mm, niet opgetild |
+
+Het dunne mes botst bij de boter via onzichtbare proxy-segmenten van 4 mm, die het onderste vlak van het lemmet delen. Daardoor is mes-boter vrijwel gelijk aan eerst. Bij de kaas is het Piper-mes 2,8 cm breed (X2-mes 2 cm) en 60 g (X2 40 g). Bij het optillen van het mes schuift nu de hele stapel mee: 10 mm al tijdens het optillen, oplopend tot ~56 mm tijdens het pakken. Eén poging met het mes in het midden van de stapel en minder optillen maakte het slechter. Dit is nog niet opgelost.
+
+In de webdemo heeft het dunne lemmet `margin="1 mm"`. `run-sandwich-demo` en `test-knife-grip` geven vrijwel dezelfde uitkomst als met 4 mm.
+
 ## Beperkingen (eerlijk)
 
 **Boter**
@@ -53,7 +69,7 @@ Bij de kaasstapel komt de grote verschuiving van plak 9 bij het optillen van het
 
 **Mes en kaas**
 - De mesgreep is weld-equivalent: het mes is een star kind van `left_link6`, zonder slip.
-- Bij de kaas is het X2-mes (lemmet 1,5 mm) gebruikt. Het webmes is 4 mm dik, dikker dan een plak van 2 mm.
+- Bij de kaas wordt nu het Piper-mes gebruikt (lemmet 1,5 mm, 2,8 cm breed).
 - De kaasgreep zijn `connect`-constraints op 3 vertices. De hand nadert onder 30° omdat horizontaal onbereikbaar is.
 - Echt snijden of scheuren is niet mogelijk.
 

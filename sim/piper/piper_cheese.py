@@ -2,7 +2,7 @@
 pinches the lifted slice at its corner. Same cheese model and knife as sim/x2/cheese_scene.py. MuJoCo, NOT Isaac Sim.
 
 Piper-specific:
-  - knife = the sim/x2 knife (1.5 mm blade): the 4 mm web-demo blade is thicker than a 2 mm slice;
+  - knife = the Piper (web-demo) knife, blade now 1.5 mm like the X2 knife (rubber handle, 60 g);
     mounted level in the left hand (weld-equivalent).
   - right gripper: parallel jaw, max ~70 mm opening. It approaches the slice corner from the side (jaw axis ~vertical),
     pitched 30 deg down, one finger above, one under the 6 mm-lifted corner, and closes. The pinch is modelled as 'connect' constraints
@@ -19,7 +19,7 @@ import cheese_scene as XC  # sim/x2 (on sys.path via piper_scene)
 N, T, SIZE, COUNT, CHEESE = XC.N, XC.T, XC.SIZE, XC.COUNT, XC.CHEESE
 STACK_XY = (0.06, 0.0)
 INTERFACE_Z = P.TABLE_TOP + (N - 1) * T
-BLADE = K.X2_BLADE
+BLADE = K.BLADE
 BLADE_Z = INTERFACE_Z - BLADE["size"][2]
 INSERT_Y = (STACK_XY[1] + 0.10, STACK_XY[1] + 0.01)   # blade centre y: tip outside the stack -> under the slice
 BLADE_X = STACK_XY[0] + 0.01
@@ -39,7 +39,7 @@ SAG = []
 def build(offscreen=(1280, 720)):
     r, wb = P.base_root(offscreen, "1.0 0.005 0.0001", tiles_c=TILES_C)
     for s in ("left", "right"): P.fingers_collide(r, s, False)
-    K.attach_knife(r, tilt_deg=0.0, segments=False, kind="x2")
+    K.attach_knife(r, tilt_deg=0.0, segments=False, kind="web")
     h = INTERFACE_Z - 0.0005 - P.TABLE_TOP  # holder stop on the far (-y) side, as sim/x2
     ET.SubElement(wb, "geom", name="stop", type="box", size=f"{SIZE / 2 + 0.01} 0.003 {h / 2}",
                   pos=f"{STACK_XY[0]} {STACK_XY[1] - SIZE / 2 - T / 2 - 0.003} {P.TABLE_TOP + h / 2}",
@@ -80,7 +80,7 @@ def plan(m):
     # hold the start pose (knife outside the stack), measure the blade height error, re-aim all left waypoints
     q = L(INSERT_Y[0], BLADE_Z, q0); d = mujoco.MjData(m); nrob = m.nq - sum(3 * m.flex_vertnum[i] for i in range(N))
     d.qpos[:nrob] = q[:nrob]; mujoco.mj_forward(m, d); g = m.geom("knife_blade").id
-    for _ in range(400): P.set_ctrl(m, d, q, {"left": 0.0075, "right": JAW_OPEN}); mujoco.mj_step(m, d)
+    for _ in range(400): P.set_ctrl(m, d, q, {"left": K.GRIP_OPEN, "right": JAW_OPEN}); mujoco.mj_step(m, d)
     dz[0] = BLADE_Z - d.geom_xpos[g][2]; SAG.append(dz[0])
     q = q0.copy(); q, e, _ = P.ik(m, "left", (BLADE_X, INSERT_Y[0], BLADE_Z + 0.03 + dz[0]), q, offset=BLADE["pos"], xax=XAX)
     wL = {"above": q[qa].copy()}
@@ -142,7 +142,7 @@ def simulate(callback=None, dt_cb=1 / 30):
         if name == "knife_down" and ref is None: ref = [slice_verts(m, d, i) for i in range(N)]
         if name == "grasp" and u > 0.5 and not grasped: res["grasp_dist"] = activate_grasp(m, d); grasped = True
         jaw = JAW_CLOSED if (name in ("pick", "hold") or (name == "grasp" and u > 0.5)) else JAW_OPEN
-        P.set_ctrl(m, d, target(t), {"left": 0.0075, "right": jaw}); mujoco.mj_step(m, d); t = d.time
+        P.set_ctrl(m, d, target(t), {"left": K.GRIP_OPEN, "right": jaw}); mujoco.mj_step(m, d); t = d.time
         if not np.isfinite(d.qpos).all(): res["finite"] = False; break
         if callback and t >= nxt: callback(m, d, t, name); nxt += dt_cb
     res["wall_per_sim_s"] = (time.time() - wall) / max(t, 1e-9)

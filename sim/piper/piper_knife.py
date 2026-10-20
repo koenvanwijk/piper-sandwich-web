@@ -1,7 +1,9 @@
 """Left Piper smooths the pressed butter with the web demo's table knife (assets/scene.xml, PR #13).
 MuJoCo only, NOT Isaac Sim.
 
-Knife = the knife of assets/scene.xml: rubber handle 9 x 2 x 1.6 cm (40 g), steel blade 14 x 2.8 x 0.4 cm (20 g).
+Knife = the knife of assets/scene.xml: rubber handle 9 x 2 x 1.6 cm (40 g), steel blade 14 x 2.8 cm x 1.5 mm (20 g)
+(was 4 mm until Oct 2026). Against the butter flex the thin blade collides through 4 mm thick invisible proxy
+segments that share the blade's bottom face (flex vertices tunnel through a 1.5 mm box).
 Grip: rigid child body of left_link6 between the closed fingertips (fingers at 10 mm = handle half-width), i.e. a
 weld-equivalent; no slip simulation. Finger meshes do not collide in these scenes, only the knife does.
 """
@@ -11,7 +13,8 @@ import piper_scene as P
 
 KNIFE_Z = 0.131                                   # handle centre on the fingertip line (link6 frame)
 HANDLE = dict(pos=(-0.025, 0, KNIFE_Z), size=(0.045, 0.01, 0.008), mass=0.04)
-BLADE = dict(pos=(0.09, 0, KNIFE_Z), size=(0.07, 0.014, 0.002), mass=0.02)
+BLADE = dict(pos=(0.09, 0, KNIFE_Z), size=(0.07, 0.014, 0.00075), mass=0.02)
+PROXY_HALF = 0.002                                # collision proxy half-thickness (butter scene)
 TILT_DEG = 15.0                                   # roll about the blade axis; world +x edge up (see plan)
 NSEG = 14                                         # collision segments, each a welded child body (max 50 contacts per body-flex pair)
 GRIP_OPEN = 0.010                                 # each finger 10 mm out: closed on the 2 cm handle
@@ -22,8 +25,7 @@ def blade_quat(tilt_deg):
     a = np.radians(tilt_deg); return (np.cos(a / 2), np.sin(a / 2), 0.0, 0.0)
 
 
-# X2 table knife (sim/x2/knife.py: handle 10 x 2 x 1.5 cm, blade 10 x 2 cm x 1.5 mm, 40 g) for the cheese stack:
-# the 4 mm web-demo blade is twice as thick as a cheese slice and cannot enter a 2 mm seam.
+# X2 table knife (sim/x2/knife.py: handle 10 x 2 x 1.5 cm, blade 10 x 2 cm x 1.5 mm, 40 g); kept for comparison.
 X2_HANDLE = dict(pos=(-0.02, 0, KNIFE_Z), size=(0.05, 0.0075, 0.01), mass=0.016)
 X2_BLADE = dict(pos=(0.08, 0, KNIFE_Z), size=(0.05, 0.01, 0.00075), mass=0.024)
 
@@ -42,11 +44,12 @@ def attach_knife(r, side="left", tilt_deg=TILT_DEG, segments=True, kind="web"):
                   contype="0" if segments else "1", conaffinity="0" if segments else "1", friction=FRICTION,
                   priority="1")
     if segments:
-        L = BLADE["size"][0]
+        L = BLADE["size"][0]; a = np.radians(tilt_deg); sh = PROXY_HALF - BLADE["size"][2]
+        dy, dz = sh * np.sin(a), -sh * np.cos(a)   # shift along -blade normal (= up in the world): same bottom face
         for i in range(NSEG):
             x = BLADE["pos"][0] - L + L / NSEG * (2 * i + 1)
-            ET.SubElement(ET.SubElement(k, "body", name=f"knife_seg{i}"), "geom", name=f"knife_seg{i}", type="box", pos=f"{x} 0 {KNIFE_Z}", quat=q,
-                          size=f"{L / NSEG} {BLADE['size'][1]} {BLADE['size'][2]}", mass="0", group="3",
+            ET.SubElement(ET.SubElement(k, "body", name=f"knife_seg{i}"), "geom", name=f"knife_seg{i}", type="box",
+                          pos=f"{x} {dy} {KNIFE_Z + dz}", quat=q, size=f"{L / NSEG} {BLADE['size'][1]} {PROXY_HALF}", mass="0", group="3",
                           rgba="0.8 0.8 0.8 0", friction=FRICTION, priority="1")
 
 
