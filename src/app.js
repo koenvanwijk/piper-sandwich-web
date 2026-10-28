@@ -523,7 +523,10 @@ class SandwichVR {
       const t = teleopArm(this, s, this.teleop[s], this.ik[s], cmds[s], this.tcpPose(s), 3, dt);   // 6-DOF pose-teleop (src/teleop.js)
       (this._dbgT ||= {})[s] = t;
       if (t.engaged) {
-        this.grip[s] = t.grip;
+        // Trekker niet in één frame doorgeven: max 4/s (≈0,25 s open→dicht). Een sprong van de vingers in één frame
+        // gaf een knijp-impuls waardoor objecten wegschoten ("snap"); zie tools/test-grab-snap.mjs.
+        const GRIP_RATE = 4, dg = t.grip - this.grip[s], lim = GRIP_RATE * dt;
+        this.grip[s] += Math.max(-lim, Math.min(lim, dg));
         if (this._mocap[s] >= 0) {
           const a = this._mocap[s] * 3;
           this.data.mocap_pos[a] = t.pos[0];
