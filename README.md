@@ -433,3 +433,8 @@ See `NOTICE` for details. This project's own code is MIT (`LICENSE`).
   brood 11 → 0,09 m/s, mes 1,2 → 0,46 m/s, boter 0,35 → 0,02 m/s.
 - **Prijs:** in `test-knife-grip.mjs` valt het mes bij willekeurig hard schudden vaker (30 % i.p.v. 17 % van 30 pogingen).
 - **Kaasstapel:** alleen in `sim/piper` (Python, flexcomp); nog niet in de web/VR-scène.
+
+## Kaasstapel in de web/VR-scène
+- 10 dunne **harde** plakjes (`cheese0`–`cheese9`, 6×6 cm, 2 mm, 8 g) naast het bord op (0,33, −0,17), geen flexcomp.
+- Test: `node tools/test-cheese-stack.mjs` — stapel ligt stil (0,00 mm drift), top op 18 mm; physics ≈ 410 µs/stap i.p.v. 335 (+22 %, desktop-node).
+- Bekende beperking (`tools/test-grab-snap.mjs`): een plakje over de dunne rand **knijpen** schiet weg (0,5 m/s); bovenste plak afschuiven met het mes of eronder scheppen werkt beter. Niet op een Quest getest.

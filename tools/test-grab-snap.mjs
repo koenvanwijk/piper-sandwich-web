@@ -8,7 +8,7 @@ import { createHeadlessSim } from './headless-sim.mjs';
 const args = process.argv.slice(2), arg = (k, d) => { const a = args.find(x => x.startsWith('--' + k + '=')); return a ? a.split('=').slice(1).join('=') : d; };
 const xml = arg('xml', null);
 const results = [];
-for (const obj of ['bread1', 'knife', 'butter0']) {
+for (const obj of ['bread1', 'knife', 'butter0', 'cheese9']) {
   const env = await createHeadlessSim({ sceneXml: xml ? fs.readFileSync(xml, 'utf8') : null });
   const { mujoco: mj, model, data } = env;
   const bid = n => mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY.value, n);
