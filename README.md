@@ -422,3 +422,14 @@ vendor/mujoco/        official MuJoCo WASM engine (mujoco.js + mujoco.wasm)
   RosenYin), with a `tcp` site added.
 
 See `NOTICE` for details. This project's own code is MIT (`LICENSE`).
+
+## Grijpen zonder "snap" (wegschieten)
+- **Oorzaak:** de vinger-actuatoren hadden `forcelimited="false"` (de `forcerange` ±100 werd dus genegeerd), kp 10000 en een
+  doel tot 0,0475 m (voorbij de slag van 0,035 m). Een trekker-klik zette de vingers in één frame dicht → honderden N
+  knijpkracht op objecten van 4–40 g → wegschieten.
+- **Fix:** vingerkracht begrensd op ±60 N (`forcelimited="true"`), kp 2000, ctrlrange = slag; trekker in de app
+  rate-limited (max 4/s); brood zachter contact (`solref 0.015`, `solimp 0.7 0.95 0.006`); rubber meshandvat wrijving 2,0.
+- **Meting** (`node tools/test-grab-snap.mjs`, object tussen de vingers, in één klap dicht, zonder zwaartekracht):
+  brood 11 → 0,09 m/s, mes 1,2 → 0,46 m/s, boter 0,35 → 0,02 m/s.
+- **Prijs:** in `test-knife-grip.mjs` valt het mes bij willekeurig hard schudden vaker (30 % i.p.v. 17 % van 30 pogingen).
+- **Kaasstapel:** alleen in `sim/piper` (Python, flexcomp); nog niet in de web/VR-scène.
